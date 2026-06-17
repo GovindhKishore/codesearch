@@ -39,7 +39,7 @@ class VectorIndex:
             client = chromadb.EphemeralClient()
             name = collection_name or "temp_collection"
 
-        collection = client.get_or_create_collection(name=name)
+        collection = client.get_or_create_collection(name=name, metadata={"hnsw:space": "cosine"})
 
         if model_name == DEFAULT_MODEL_NAME:
             model = SentenceTransformer(model_name, trust_remote_code=True, revision=JINA_CORE_REVISION)

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Fuser:
+    bm25_weight: float = 1.0
+    vector_weight: float = 1.0
     structural_weight: float = 1.0
     k: int = 60
 
@@ -12,16 +14,13 @@ class Fuser:
             bm25_results: list[ScoredFunction],
             vector_results: list[ScoredFunction],
             structural_results: list[ScoredFunction],
-            bm25_weight: float = 1.0,
-            vector_weight: float = 1.0,
-            structural_weight: float = 1.0,
     ) -> list[ScoredFunction]:
         scores: dict[tuple[str, str, int], float] = {}
         function_map: dict[tuple[str, str, int], FunctionInfo] = {}
 
-        self._accumulate(results=bm25_results, scores=scores, function_map=function_map, weight=bm25_weight)
-        self._accumulate(results=vector_results, scores=scores, function_map=function_map, weight=vector_weight)
-        self._accumulate(results=structural_results, scores=scores, function_map=function_map, weight=structural_weight)
+        self._accumulate_scores(results=bm25_results, scores=scores, function_map=function_map, weight=self.bm25_weight)
+        self._accumulate_scores(results=vector_results, scores=scores, function_map=function_map, weight=self.vector_weight)
+        self._accumulate_scores(results=structural_results, scores=scores, function_map=function_map, weight=self.structural_weight)
 
         sorted_keys = sorted(scores.keys(), key=lambda key: scores[key], reverse=True)
 

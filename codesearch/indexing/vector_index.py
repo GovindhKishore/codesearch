@@ -54,6 +54,7 @@ class VectorIndex:
                 "file": func.file.as_posix(),
                 "name": func.name,
                 "line": func.line,
+                "doc_string": func.doc_string,
                 "callers": ",".join(func.callers),
                 "callees": ",".join(func.callees),
             }

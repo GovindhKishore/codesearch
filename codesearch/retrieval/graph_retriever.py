@@ -39,7 +39,7 @@ class GraphRetriever:
                 name=name,
                 file=Path(node_data["file"]),
                 line=node_data["line"],
-                doc_string=None,
+                doc_string=node_data["doc_string"],
                 params=[],
                 return_type=None,
                 callees=[],

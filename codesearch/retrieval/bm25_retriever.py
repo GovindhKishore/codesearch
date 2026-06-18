@@ -27,7 +27,7 @@ class BM25Retriever:
                 name=func.name,
                 file=func.file,
                 line=func.line,
-                doc_string=None,
+                doc_string=func.doc_string,
                 params=[],
                 return_type=func.return_type,
                 callees=[],

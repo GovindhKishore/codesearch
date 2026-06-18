@@ -16,7 +16,7 @@ class GraphIndex:
         graph = nx.DiGraph()
 
         for func in functions:
-            graph.add_node(func.name, file=func.file.as_posix(), line=func.line)
+            graph.add_node(func.name, file=func.file.as_posix(), line=func.line, doc_string=func.doc_string)
 
         for func in functions:
             for callee in func.callees:

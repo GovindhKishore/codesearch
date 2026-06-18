@@ -1,5 +1,7 @@
 from codesearch.indexing.bm25_index import BM25Index, tokenize
 from codesearch.retrieval.types import ScoredFunction
+from dataclasses import dataclass
+from codesearch.parsing.parser import FunctionInfo
 
 @dataclass
 class BM25Retriever:
@@ -19,7 +21,26 @@ class BM25Retriever:
 
         top_results = func_score_pair[:top_k]
 
-        return [
-            ScoredFunction(function=func, score=score, rank=rank, retriever="bm25")
-            for rank, (func, score) in enumerate(top_results, start=1)
-        ]
+        scored_functions = []
+        for rank, (func, score) in enumerate(top_results, start=1):
+            minimal_function = FunctionInfo(
+                name=func.name,
+                file=func.file,
+                line=func.line,
+                doc_string=None,
+                params=[],
+                return_type=func.return_type,
+                callees=[],
+                callers=[],
+            )
+
+
+            scored_functions.append(ScoredFunction(
+                function=func,
+                score=score,
+                rank=rank,
+                retriever="bm25"
+            ))
+
+        return scored_functions
+

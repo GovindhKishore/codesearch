@@ -34,8 +34,8 @@ class VectorRetriever:
                 doc_string=None,
                 params=[],
                 return_type=None,
-                callees=meta["callees"].split(",") if meta["callees"] else [],
-                callers=meta["callers"].split(",") if meta["callers"] else [],
+                callees=[],
+                callers=[],
             )
 
             scored_functions.append(ScoredFunction(

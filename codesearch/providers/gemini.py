@@ -15,7 +15,7 @@ class GeminiProvider(BaseProvider):
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.1)
+                config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
             )
             return response.text if response.text else None
 

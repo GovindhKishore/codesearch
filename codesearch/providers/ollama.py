@@ -14,6 +14,7 @@ class OllamaProvider(BaseProvider):
                 model=self.model_name,
                 prompt=prompt,
                 options={"temperature": 0.1},
+                format="json",
             )
 
             return response.response if response.response else None

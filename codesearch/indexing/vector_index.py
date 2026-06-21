@@ -3,7 +3,6 @@ from dataclasses import dataclass
 
 import chromadb
 from chromadb.api.models.Collection import Collection
-from sentence_transformers import SentenceTransformer
 
 from codesearch.parsing.parser import FunctionInfo
 
@@ -13,7 +12,7 @@ JINA_CORE_REVISION = "516f4baf13dec4ddddda8631e019b5737c8bc250"
 @dataclass
 class VectorIndex:
     collection: Collection
-    model: SentenceTransformer
+    model: "SentenceTransformer"
     model_name: str
 
     @classmethod
@@ -25,6 +24,8 @@ class VectorIndex:
             persist_path: Path | None = None,
             model_name: str = DEFAULT_MODEL_NAME,
     ) -> "VectorIndex":
+        from sentence_transformers import SentenceTransformer
+
         if not functions:
             raise ValueError("Cannot build VectorIndex with an empty list of functions.")
         if persist and not collection_name:
@@ -76,6 +77,7 @@ class VectorIndex:
         persist_path: Path,
         model_name: str = DEFAULT_MODEL_NAME,
     ) -> "VectorIndex":
+        from sentence_transformers import SentenceTransformer
 
         client = chromadb.PersistentClient(path=str(persist_path))
 
@@ -92,3 +94,11 @@ class VectorIndex:
             loaded_model = SentenceTransformer(model_name)
 
         return cls(collection=collection, model=loaded_model, model_name=model_name)
+
+    @classmethod
+    def delete(cls, collection_name: str, persist_path: Path) -> None:
+        client = chromadb.PersistentClient(path=str(persist_path))
+        try:
+            client.delete_collection(name=collection_name)
+        except ValueError:
+            pass

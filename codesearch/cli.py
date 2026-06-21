@@ -112,6 +112,7 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
 
 app = typer.Typer()
 
+
 @app.command()
 def index(folder: Path):
     folder = folder.resolve()
@@ -249,6 +250,7 @@ def set_api_key(provider: str, api_key: str):
         typer.echo(f"Failed to save API key for {provider}.")
         raise typer.Exit(code=1)
 
+
 @app.command()
 def get_api_key(provider: str):
     if provider not in VALID_KEY_PROVIDERS:
@@ -261,6 +263,7 @@ def get_api_key(provider: str):
     else:
         typer.echo(f"{provider} API key: {api_key}")
 
+
 @app.command()
 def clear_api_key(provider: str):
     if provider not in VALID_KEY_PROVIDERS:
@@ -272,9 +275,42 @@ def clear_api_key(provider: str):
     else:
         typer.echo(f"No API key was set for {provider}, or it could not be cleared.")
 
+
 @app.command()
-def clear():
-    pass
+def clear(folder: Path | None = None, all_items: bool = False):
+    if not folder and not all_items:
+        typer.echo("Provide a folder to clear, or use --all_items to clear everything.")
+        raise typer.Exit(code=1)
+    if folder and all_items:
+        typer.echo("Provide either a folder or --all_items.")
+        raise typer.Exit(code=1)
+
+    registry = load_registry()
+
+    if all_items:
+        hashes_to_clear = list(registry.keys())
+    else:
+        folder = folder.resolve()
+        project_hash = compute_project_hash(folder)
+        if project_hash not in registry:
+            typer.echo(f"{folder} is not indexed. Nothing to clear.")
+            typer.Exit(code=0)
+        hashes_to_clear = [project_hash]
+
+    for project_hash in hashes_to_clear:
+        (BM25_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
+        VectorIndex.delete(collection_name=project_hash, persist_path=CHROMA_DIR)
+        (GRAPH_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
+        del registry[project_hash]
+
+    try:
+        save_registry(registry)
+    except (OSError, TypeError) as e:
+        typer.echo(f"Indexes were cleared but failed to update registry: {e}")
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Cleared {len(hashes_to_clear)} project(s).")
+
 
 @app.command()
 def reindex(folder: Path):

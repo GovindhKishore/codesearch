@@ -8,7 +8,6 @@ def get_api_key(provider: str) -> str | None:
     except Exception:
         return None
 
-
 def set_api_key(provider: str, api_key: str) -> bool:
     try:
         keyring.set_password(SERVICE_NAME, provider, api_key)

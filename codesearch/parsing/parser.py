@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-import ast
+import ast, os
 from pathlib import Path
 from collections import defaultdict
 
@@ -25,30 +25,27 @@ class FunctionInfo:
 
 class CodebaseParser:
 
-    def __init__(self, skip_dirs: list[str] | None = None):
-        self.skip_dirs = skip_dirs or [
-            "__pycache__",
-            ".git",
-            "venv",
-            ".venv",
-            "node_modules",
-            "dist",
-            "build",
-            ".eggs",
-            "egg-info",
-        ]
+    def __init__(self, skip_dirs: set[str] | None = None):
+        self.skip_dirs = skip_dirs or {
+            "__pycache__", ".git", "venv", ".venv", "node_modules", "dist", "build",
+            ".eggs", "egg-info", ".idea", ".vscode", ".pytest_cache", ".mypy_cache",
+            ".tox", "htmlcov",
+        }
 
     def parse_dir(self, folder: Path) -> list[FunctionInfo]:
         all_functions = []
         name_fninfo_map = defaultdict(list)
 
-        for filepath in folder.rglob("*.py"):
-            if any(skip in filepath.parts for skip in self.skip_dirs):
-                continue
-            file_functions = self.parse_file(filepath)
-            all_functions.extend(file_functions)
-            for func in file_functions:
-                name_fninfo_map[func.name].append(func)
+        for dirpath, dirnames, filenames in os.walk(folder):
+            dirnames[:] = [d for d in dirnames if d not in self.skip_dirs]
+            for filename in filenames:
+                if not filename.endswith(".py"):
+                    continue
+                filepath = Path(dirpath) / filename
+                file_functions = self.parse_file(filepath)
+                all_functions.extend(file_functions)
+                for func in file_functions:
+                    name_fninfo_map[func.name].append(func)
 
 
         for func in all_functions:
@@ -96,10 +93,9 @@ class CodebaseParser:
 
         return functions
 
-    def build_composite_doc(self, func: FunctionInfo) -> str:
-        parts = []
-
-        parts.append(func.name.replace("_", " "))
+    @staticmethod
+    def build_composite_doc(func: FunctionInfo) -> str:
+        parts = [func.name.replace("_", " ")]
 
         if func.doc_string:
             parts.append(func.doc_string)
@@ -125,8 +121,8 @@ class CodebaseParser:
 
         return "\n".join(parts)
 
-
-    def _extract_params(self, args_node: ast.arguments) -> list[str]:
+    @staticmethod
+    def _extract_params(args_node: ast.arguments) -> list[str]:
         params = []
         all_args = args_node.posonlyargs + args_node.args + args_node.kwonlyargs
 
@@ -140,7 +136,8 @@ class CodebaseParser:
 
         return params
 
-    def _extract_callees(self, func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    @staticmethod
+    def _extract_callees(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
         callees = set()
 
         for node in ast.walk(func_node):

@@ -1,0 +1,380 @@
+[
+  {
+    "query": "convert a cv that could be a number or something into spliter for cv",
+    "relevant_functions": [
+      "check_cv"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_split.py"
+    ],
+    "lines": [
+      2697
+    ]
+  },
+  {
+    "query": "funtion that split a daaset into one training set and test set",
+    "relevant_functions": [
+      "train_test_split"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_split.py"
+    ],
+    "lines": [
+      2797
+    ]
+  },
+  {
+    "query": "funtion that splits data chronologicaly so the model never trains on future data",
+    "relevant_functions": [
+      "split",
+      "_split"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_split.py",
+      "sklearn-eval-core/model_selection/_split.py"
+    ],
+    "lines": [
+      1245,
+      1275
+    ]
+  },
+  {
+    "query": "function which checks if the traininig and tesitng split sizes are meaningful given the size of the dataset",
+    "relevant_functions": [
+      "_validate_shuffle_split"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_split.py"
+    ],
+    "lines": [
+      2445
+    ]
+  },
+  {
+    "query": "function which helps find whether model performance is improving or not as the training set size increases",
+    "relevant_functions": [
+      "learning_curve"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      1776
+    ]
+  },
+  {
+    "query": "function which evaluates how changing a hyperparameter affects the model",
+    "relevant_functions": [
+      "validation_curve"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      2283
+    ]
+  },
+  {
+    "query": "function for cross validaotion",
+    "relevant_functions": [
+      "cross_validate",
+      "cross_val_score"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py",
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      101,
+      512
+    ]
+  },
+  {
+    "query": "cross validaiont funtion which only gives the score nothing else",
+    "relevant_functions": [
+      "cross_val_score"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      512
+    ]
+  },
+  {
+    "query": "crosss validation that supports multiple scoring metrics. Also gives fit and score times",
+    "relevant_functions": [
+      "cross_validate"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      101
+    ]
+  },
+  {
+    "query": "function that takes X and y, also the list of indices of traininng and testing egs and gives the score",
+    "relevant_functions": [
+      "_fit_and_score"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      670
+    ]
+  },
+  {
+    "query": "function that converts a list of score dictinoaires into a single dictionary mapping each metric name to an array of all its values",
+    "relevant_functions": [
+      "_aggregate_score_dicts"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      2517
+    ]
+  },
+  {
+    "query": "function which checks if a score list is single metric or multi metric and based on which creates a dict with keys as indivuudual metrics and their corresponding values as all the values corresponding to that metric",
+    "relevant_functions": [
+      "_normalize_score_results",
+      "_aggregate_score_dicts"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py",
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      452,
+      2517
+    ]
+  },
+  {
+    "query": "function which divides the dataset into differnet folds and gets predisctions on all samples in a specific fold based on a model trained on all remaining folds, likewise gives predictions for all samples in the whole dataset",
+    "relevant_functions": [
+      "cross_val_predict"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      1031
+    ]
+  },
+  {
+    "query": "function which checks if an array of row indices is a valid rdering with respect to total number of rows",
+    "relevant_functions": [
+      "_check_is_permutation"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_validation.py"
+    ],
+    "lines": [
+      1437
+    ]
+  },
+  {
+    "query": "functon which fits a given esitmator based on a given set of combinations of different paraamters to help find the best set of parsmeters",
+    "relevant_functions": [
+      "fit"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_search.py"
+    ],
+    "lines": [
+      964
+    ]
+  },
+  {
+    "query": "funcion which gives score on a dataet using the estimator which was created automaticlly after identifying the best parametrs",
+    "relevant_functions": [
+      "score"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_search.py"
+    ],
+    "lines": [
+      503
+    ]
+  },
+  {
+    "query": "functionn which geneates and gives all possible combinaions of different parameters to check which combintion is better",
+    "relevant_functions": [
+      "__iter__"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_search.py"
+    ],
+    "lines": [
+      153
+    ]
+  },
+  {
+    "query": "function which gives illsutration for leanring curve",
+    "relevant_functions": [
+      "plot"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_plot.py"
+    ],
+    "lines": [
+      211
+    ]
+  },
+  {
+    "query": "the funtion which helps me find estimator has a speicific method or not",
+    "relevant_functions": [
+      "_search_estimator_has"
+    ],
+    "files": [
+      "sklearn-eval-core/model_selection/_search.py"
+    ],
+    "lines": [
+      369
+    ]
+  },
+  {
+    "query": "give me the funtcion whic is used to tranform rows or cols based on mean and standard deviaiton",
+    "relevant_functions": [
+      "scale"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_data.py"
+    ],
+    "lines": [
+      146
+    ]
+  },
+  {
+    "query": "functinos used for calculating  the terms used for minmax scaling",
+    "relevant_functions": [
+      "fit",
+      "partial_fit"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_data.py",
+      "sklearn-eval-core/preprocessing/_data.py"
+    ],
+    "lines": [
+      454,
+      476
+    ]
+  },
+  {
+    "query": "give the funciotn which resets any associated varibales and calculate the new varibales required for minmax scaling.",
+    "relevant_functions": [
+      "fit"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_data.py"
+    ],
+    "lines": [
+      454
+    ]
+  },
+  {
+    "query": "give me the function that actually applies the minmax tranformation and gives the transformed array or df",
+    "relevant_functions": [
+      "transform",
+      "minmax_scale"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_data.py",
+      "sklearn-eval-core/preprocessing/_data.py"
+    ],
+    "lines": [
+      547,
+      631
+    ]
+  },
+  {
+    "query": "give the fuction whcih can be used for standardizing df cols based on mean and std",
+    "relevant_functions": [
+      "scale",
+      "transform"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_data.py",
+      "sklearn-eval-core/preprocessing/_data.py"
+    ],
+    "lines": [
+      146,
+      1092
+    ]
+  },
+  {
+    "query": "the method for revertign  Standarsizatoin applied on df or array",
+    "relevant_functions": [
+      "inverse_transform"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_data.py"
+    ],
+    "lines": [
+      1137
+    ]
+  },
+  {
+    "query": "funciton used for makeing each row vector have unit magnitude",
+    "relevant_functions": [
+      "normalize"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_data.py"
+    ],
+    "lines": [
+      1978
+    ]
+  },
+  {
+    "query": "mehtod whihc helps convert a df of diffceretn values into 0 and 1 everywhere based on a cutoff",
+    "relevant_functions": [
+      "binarize"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_data.py"
+    ],
+    "lines": [
+      2236
+    ]
+  },
+  {
+    "query": "funtoin whihc figues out which catrgories to drop in ohe",
+    "relevant_functions": [
+      "_set_drop_idx"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_encoders.py"
+    ],
+    "lines": [
+      812
+    ]
+  },
+  {
+    "query": "the method whihc gives the new cols generated after ohe",
+    "relevant_functions": [
+      "get_feature_names_out"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_encoders.py"
+    ],
+    "lines": [
+      1215
+    ]
+  },
+  {
+    "query": "convetr categorical cols into ordinal ints and dont create new cols",
+    "relevant_functions": [
+      "transform"
+    ],
+    "files": [
+      "sklearn-eval-core/preprocessing/_encoders.py"
+    ],
+    "lines": [
+      1584
+    ]
+  }
+]

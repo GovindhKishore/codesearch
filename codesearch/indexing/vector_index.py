@@ -3,11 +3,11 @@ from dataclasses import dataclass
 
 import chromadb
 from chromadb.api.models.Collection import Collection
+from chromadb.errors import NotFoundError
 
 from codesearch.parsing.parser import FunctionInfo
 
-DEFAULT_MODEL_NAME = "jinaai/jina-embeddings-v2-base-code"
-JINA_CORE_REVISION = "516f4baf13dec4ddddda8631e019b5737c8bc250"
+DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
 
 @dataclass
 class VectorIndex:
@@ -37,7 +37,7 @@ class VectorIndex:
             client = chromadb.PersistentClient(path=str(persist_path))
             try:
                 client.delete_collection(name=collection_name)
-            except ValueError:
+            except NotFoundError:
                 pass
             name = collection_name
         else:
@@ -47,7 +47,7 @@ class VectorIndex:
         collection = client.create_collection(name=name, metadata={"hnsw:space": "cosine"})
 
         if model_name == DEFAULT_MODEL_NAME:
-            model = SentenceTransformer(model_name, trust_remote_code=True, revision=JINA_CORE_REVISION)
+            model = SentenceTransformer(model_name)
         else:
             model = SentenceTransformer(model_name)
 
@@ -59,7 +59,7 @@ class VectorIndex:
                 "file": func.file.as_posix(),
                 "name": func.name,
                 "line": func.line,
-                "doc_string": func.doc_string,
+                "doc_string": func.doc_string if func.doc_string is not None else "",
                 "callers": ",".join(func.callers),
                 "callees": ",".join(func.callees),
             }
@@ -89,7 +89,7 @@ class VectorIndex:
             ) from e
 
         if model_name == DEFAULT_MODEL_NAME:
-            loaded_model = SentenceTransformer(model_name, trust_remote_code=True, revision=JINA_CORE_REVISION)
+            loaded_model = SentenceTransformer(model_name)
         else:
             loaded_model = SentenceTransformer(model_name)
 
@@ -100,5 +100,5 @@ class VectorIndex:
         client = chromadb.PersistentClient(path=str(persist_path))
         try:
             client.delete_collection(name=collection_name)
-        except ValueError:
+        except NotFoundError:
             pass

@@ -158,7 +158,6 @@ codesearch/
 
 ## Roadmap
 
-- [ ] Finalize ablation table with real numbers
+- [x] Finalize ablation table with real numbers
 - [ ] PyPI publication (rename from `codesearch` working title first)
 - [ ] Class-aware graph node keys (v2 structural retrieval fix)
-- [ ] Support for languages beyond Python (JavaScript/TypeScript via tree-sitter)

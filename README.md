@@ -104,12 +104,12 @@ Keys are stored in your OS's native credential store (Windows Credential Manager
 
 The project includes an evaluation framework in `eval/` that measures retrieval quality using standard IR metrics across four configurations:
 
-| Configuration | MRR@5 | Recall@10 |
-|---|---|---|
-| BM25 only | — | — |
-| Semantic only | — | — |
-| Structural only | — | — |
-| Hybrid fusion | — | — |
+| Configuration | MRR@5 | Recall@10 | Precision@5 |
+|---|---:|---:|---:|
+| BM25 only | 0.2844 | 0.4833 | 0.0800 |
+| Semantic only | 0.4344 | 0.5667 | 0.1217 |
+| Structural only | 0.0167 | 0.0333 | 0.0067 |
+| Hybrid fusion | 0.4278 | 0.6667 | 0.1200 |
 
 *Numbers pending - evaluation running against a hand-labeled benchmark of 30 queries on scikit-learn's `model_selection` and `preprocessing` subpackages (~1,000+ indexed functions).*
 

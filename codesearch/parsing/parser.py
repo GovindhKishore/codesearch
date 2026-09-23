@@ -19,8 +19,9 @@ class FunctionInfo:
     doc_string: str | None
     params: list[str]
     return_type: str | None
-    callees: list[str]
-    callers: list[str] = field(default_factory=list)
+    callees: list[tuple[str, str | None]]
+    callers: list[tuple[str, str | None]] = field(default_factory=list)
+    class_name: str | None = None
     composite_doc: str = field(default="", repr=False)
 
 class CodebaseParser:
@@ -45,14 +46,14 @@ class CodebaseParser:
                 file_functions = self.parse_file(filepath)
                 all_functions.extend(file_functions)
                 for func in file_functions:
-                    name_fninfo_map[func.name].append(func)
+                    name_fninfo_map[(func.name, func.class_name)].append(func)
 
 
         for func in all_functions:
-            for callee_name in func.callees:
-                for callee_func in name_fninfo_map[callee_name]:
+            for callee_name, callee_class in func.callees:
+                for callee_func in name_fninfo_map[(callee_name, callee_class)]:
                     if callee_func is not func:
-                        callee_func.callers.append(func.name)
+                        callee_func.callers.append((func.name, func.class_name))
 
 
         for func in all_functions:
@@ -67,30 +68,8 @@ class CodebaseParser:
         except (SyntaxError, ValueError, UnicodeDecodeError, OSError):
             return []
 
-        functions = []
-
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-
-            name = node.name
-            file = filepath
-            line = node.lineno
-            doc_string = ast.get_docstring(node)
-            params = self._extract_params(node.args)
-            return_type = ast.unparse(node.returns) if node.returns else None
-            callees = self._extract_callees(node)
-
-            functions.append(FunctionInfo(
-                name=name,
-                file=file,
-                line=line,
-                doc_string=doc_string,
-                params=params,
-                return_type=return_type,
-                callees=callees
-            ))
-
+        functions: list[FunctionInfo] = []
+        self._walk_body(tree.body, filepath, None, functions)
         return functions
 
     @staticmethod
@@ -108,11 +87,11 @@ class CodebaseParser:
             parts.append(func.return_type.replace("_", " "))
 
         if func.callees:
-            normalized_callees = [c.replace("_", " ") for c in func.callees]
+            normalized_callees = [c + callee.replace("_", " ") for callee, c in func.callees]
             parts.append(" ".join(normalized_callees))
 
         if func.callers:
-            normalized_callers = [c.replace("_", " ") for c in func.callers]
+            normalized_callers = [c + caller.replace("_", " ") for caller, c in func.callers]
             parts.append(" ".join(normalized_callers))
 
         module = str(func.file).replace("\\", "/")
@@ -137,23 +116,63 @@ class CodebaseParser:
         return params
 
     @staticmethod
-    def _extract_callees(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    def _extract_callees(func_node: ast.FunctionDef | ast.AsyncFunctionDef, current_class: str | None) -> list[tuple[str, str | None]]:
         callees = set()
 
         for node in ast.walk(func_node):
             if not isinstance(node, ast.Call):
                 continue
+
             if isinstance(node.func, ast.Name):
                 name = node.func.id
+                if name not in BUILTIN_SKIP:
+                    callees.add((name, None))
+
             elif isinstance(node.func, ast.Attribute):
                 name = node.func.attr
-            else:
-                continue
-
-            if name not in BUILTIN_SKIP and name not in ("self", "cls"):
-                callees.add(name)
+                if name in BUILTIN_SKIP:
+                    continue
+                if isinstance(node.func.value, ast.Name) and node.func.value.id in ("self", "cls"):
+                    callees.add((name, current_class))
+                else:
+                    callees.add((name, "UNKNOWN"))
 
         return list(callees)
+
+    def _walk_body(self, body: list[ast.stmt], filepath : Path, current_class: str | None, functions: list[FunctionInfo]) -> None:
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = node.name
+                file = filepath
+                line = node.lineno
+                doc_string = ast.get_docstring(node)
+                params = self._extract_params(node.args)
+                return_type = ast.unparse(node.returns) if node.returns else None
+                callees = self._extract_callees(node, current_class)
+
+                functions.append(FunctionInfo(
+                    name=name,
+                    file=file,
+                    line=line,
+                    doc_string=doc_string,
+                    params=params,
+                    return_type=return_type,
+                    callees=callees,
+                    class_name=current_class,
+                ))
+                self._walk_body(node.body, filepath, current_class, functions)
+            elif isinstance(node, ast.ClassDef):
+                self._walk_body(node.body, filepath, node.name, functions)
+            elif isinstance(node, ast.Try):
+                self._walk_body(node.body, filepath, current_class, functions)
+                for handler in node.handlers:
+                    self._walk_body(handler.body, current_class, functions)
+                self._walk_body(node.orelse, filepath, current_class, functions)
+                self._walk_body(node.finalbody, filepath, current_class, functions)
+            elif hasattr(node, "body"):
+                self._walk_body(node.body, filepath, current_class, functions)
+                if hasattr(node, "orelse"):
+                    self._walk_body(node.orelse, filepath, current_class, functions)
 
 
 

@@ -87,11 +87,11 @@ class CodebaseParser:
             parts.append(func.return_type.replace("_", " "))
 
         if func.callees:
-            normalized_callees = [c + callee.replace("_", " ") for callee, c in func.callees]
+            normalized_callees = [c + callee.replace("_", " ") if c is not None else callee.replace("_", " ") for callee, c in func.callees]
             parts.append(" ".join(normalized_callees))
 
         if func.callers:
-            normalized_callers = [c + caller.replace("_", " ") for caller, c in func.callers]
+            normalized_callers = [c + caller.replace("_", " ") if c is not None else caller.replace("_", " ") for caller, c in func.callers]
             parts.append(" ".join(normalized_callers))
 
         module = str(func.file).replace("\\", "/")
@@ -166,7 +166,7 @@ class CodebaseParser:
             elif isinstance(node, ast.Try):
                 self._walk_body(node.body, filepath, current_class, functions)
                 for handler in node.handlers:
-                    self._walk_body(handler.body, current_class, functions)
+                    self._walk_body(handler.body, filepath, current_class, functions)
                 self._walk_body(node.orelse, filepath, current_class, functions)
                 self._walk_body(node.finalbody, filepath, current_class, functions)
             elif hasattr(node, "body"):

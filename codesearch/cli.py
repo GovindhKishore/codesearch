@@ -2,6 +2,7 @@ import typer
 from pathlib import Path
 import hashlib, json
 import os
+import time
 from codesearch.parsing.parser import CodebaseParser
 from codesearch.indexing.bm25_index import BM25Index
 from codesearch.indexing.vector_index import VectorIndex
@@ -21,6 +22,8 @@ GRAPH_DIR = Path.home() / ".codesearch" / "graphs"
 CHROMA_DIR = Path.home() / ".codesearch" / "chroma"
 
 VALID_KEY_PROVIDERS = {"gemini"}
+
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 def compute_project_hash(folder: Path) -> str:
     return hashlib.sha256(folder.as_posix().encode("utf-8")).hexdigest()
@@ -57,7 +60,7 @@ def get_file_mtimes(folder: Path) -> dict[str, float]:
 
     return file_mtimes
 
-def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, GraphIndex]:
+def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, GraphIndex, float, float, float]:
     if not no_index:
         project_hash = compute_project_hash(folder)
 
@@ -77,18 +80,27 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
                 raise typer.Exit(code=0)
 
         try:
+            tb0 = time.perf_counter()
             bm25_index = BM25Index.load(BM25_DIR / f"{project_hash}.pkl")
+            tb1 = time.perf_counter()
+
+            tv0 = time.perf_counter()
             vector_index = VectorIndex.load(
                 collection_name=project_hash,
                 persist_path=CHROMA_DIR,
                 model_name=indexed_project["vector_index_embedding_model"],
             )
+            tv1 = time.perf_counter()
+
+            tg0 = time.perf_counter()
             graph_index = GraphIndex.load(GRAPH_DIR / f"{project_hash}.pkl")
+            tg1 = time.perf_counter()
+
         except Exception as e:
             typer.echo(f"Failed to load indexes: {e}")
             raise typer.Exit(code=1)
 
-        return bm25_index, vector_index, graph_index
+        return bm25_index, vector_index, graph_index, tb1 - tb0, tv1 - tv0, tg1 - tg0
 
     else:
         parser = CodebaseParser()
@@ -99,14 +111,23 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
             raise typer.Exit(code=1)
 
         try:
+            ttb0 = time.perf_counter()
             bm25_index = BM25Index.build(functions)
+            ttb1 = time.perf_counter()
+
+            ttv0 = time.perf_counter()
             vector_index = VectorIndex.build(functions, persist=False)
+            ttv1 = time.perf_counter()
+
+            ttg0 = time.perf_counter()
             graph_index = GraphIndex.build(functions)
+            ttg1 = time.perf_counter()
+
         except Exception as e:
             typer.echo(f"Failed to build indexes: {e}")
             raise typer.Exit(code=1)
 
-        return bm25_index, vector_index, graph_index
+        return bm25_index, vector_index, graph_index, ttb1 - ttb0, ttv1 - ttv0, ttg1 - ttg0
 
 
 
@@ -114,33 +135,51 @@ app = typer.Typer()
 
 
 @app.command()
-def index(folder: Path):
+def index(folder: Path, timings: bool = False):
     folder = folder.resolve()
     project_hash = compute_project_hash(folder)
 
     registry = load_registry()
     if project_hash in registry:
         typer.echo(f"Already indexed: {folder}. Run 'codesearch reindex' to rebuild.")
-        typer.Exit(code=0)
+        raise typer.Exit(code=0)
 
     parser = CodebaseParser()
+
+    tp0 = time.perf_counter()
     functions = parser.parse_dir(folder)
+    tp1 = time.perf_counter()
 
     if not functions:
         typer.echo(f"No functions found in {folder}. Nothing to index.")
         raise typer.Exit(code=1)
 
     typer.echo(f"Parsed {len(functions)} functions. Building indexes...")
+    if timings:
+        typer.echo(f"Parsing took {tp1 - tp0:.2f} seconds.")
 
     try:
+        tb0 = time.perf_counter()
         bm25_index = BM25Index.build(functions)
+        tb1 = time.perf_counter()
+
+        tv0 = time.perf_counter()
         vector_index = VectorIndex.build(
             functions,
             persist=True,
             collection_name=project_hash,
             persist_path=CHROMA_DIR,
         )
+        tv1 = time.perf_counter()
+
+        tg0 = time.perf_counter()
         graph_index = GraphIndex.build(functions)
+        tg1 = time.perf_counter()
+
+        if timings:
+            typer.echo(f"BM25 index built in {tb1 - tb0:.2f} seconds.")
+            typer.echo(f"Vector index built in {tv1 - tv0:.2f} seconds.")
+            typer.echo(f"Graph index built in {tg1 - tg0:.2f} seconds.")
 
         bm25_index.save(BM25_DIR / f"{project_hash}.pkl")
         graph_index.save(GRAPH_DIR / f"{project_hash}.pkl")
@@ -169,31 +208,53 @@ def search(
         query: str,
         folder: Path,
         no_index: bool = False,
-        bm25_weight: float = 1.0,
+        bm25_weight: float = 0.7,
         vector_weight: float = 1.0,
-        structural_weight: float = 0.3,
+        structural_weight: float = 0.1,
         max_hop: int = 2,
         decay_factor: float = 0.5,
         provider: str | None = None,
         top_n: int = 10,
+        timings: bool = False,
     ):
     folder = folder.resolve()
 
-    bm25_index, vector_index, graph_index = get_indexes(folder, no_index=no_index)
+    bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index)
+
+    if timings:
+        typer.echo(f"BM25 index load took {blt:.2f} seconds.")
+        typer.echo(f"Vector index load took {vlt:.2f} seconds.")
+        typer.echo(f"Graph index load took {glt:.2f} seconds.")
 
     bm25_retriever = BM25Retriever(bm25_index)
     vector_retriever = VectorRetriever(vector_index)
     graph_retriever = GraphRetriever(graph_index)
 
+    tbs0 = time.perf_counter()
     bm25_results = bm25_retriever.search(query)
+    tbs1 = time.perf_counter()
+
+    tvs0 = 0.0
+    tvs1 = 0.0
     try:
+        tvs0 = time.perf_counter()
         vector_results = vector_retriever.search(query)
+        tvs1 = time.perf_counter()
     except Exception as e:
         typer.echo(f"Vector search failed ({e}), continuing with keyword + structural search only.")
         vector_results = []
 
     seeds = bm25_results[:10] + vector_results[:10]
+
+    tgs0 = time.perf_counter()
     graph_results = graph_retriever.search(seeds, max_hop=max_hop, decay_factor=decay_factor)
+    tgs1 = time.perf_counter()
+
+    if timings:
+        typer.echo(f"BM25 search took {tbs1 - tbs0:.2f} seconds.")
+        if tvs1 != 0.0:
+            typer.echo(f"Vector search took {tvs1 - tvs0:.2f} seconds.")
+        typer.echo(f"Graph search took {tgs1 - tgs0:.2f} seconds.")
 
     fuser = Fuser(
         bm25_weight=bm25_weight,
@@ -214,11 +275,23 @@ def search(
         else:
             gemini_provider = GeminiProvider(api_key=api_key)
             reranker = Reranker(provider=gemini_provider, top_n=top_n)
+
+            tge0 = time.perf_counter()
             final_results = reranker.rerank(query, rerank_candidates)
+            tge1 = time.perf_counter()
+
+            if timings:
+                typer.echo(f"Reranking using Gemini took {tge1 - tge0:.2f} seconds.")
     elif provider == "ollama":
         ollama_provider = OllamaProvider()
         reranker = Reranker(provider=ollama_provider, top_n=top_n)
+
+        toll0 = time.perf_counter()
         final_results = reranker.rerank(query, rerank_candidates)
+        toll1 = time.perf_counter()
+
+        if timings:
+            typer.echo(f"Reranking using Ollama took {toll1 - toll0:.2f} seconds.")
     else:
         typer.echo(f"Unknown provider: {provider}. Skipping reranking, showing fused results.")
         final_results = rerank_candidates[:top_n]
@@ -294,7 +367,7 @@ def clear(folder: Path | None = None, all_items: bool = False):
         project_hash = compute_project_hash(folder)
         if project_hash not in registry:
             typer.echo(f"{folder} is not indexed. Nothing to clear.")
-            typer.Exit(code=0)
+            raise typer.Exit(code=0)
         hashes_to_clear = [project_hash]
 
     for project_hash in hashes_to_clear:
@@ -313,28 +386,47 @@ def clear(folder: Path | None = None, all_items: bool = False):
 
 
 @app.command()
-def reindex(folder: Path):
+def reindex(folder: Path, timings: bool = False):
     folder = folder.resolve()
     project_hash = compute_project_hash(folder)
 
     parser = CodebaseParser()
+
+    tp0 = time.perf_counter()
     functions = parser.parse_dir(folder)
+    tp1 = time.perf_counter()
 
     if not functions:
         typer.echo(f"No functions found in {folder}. Nothing to index.")
         raise typer.Exit(code=1)
 
+
     typer.echo(f"Parsed {len(functions)} functions. Building indexes...")
+    if timings:
+        typer.echo(f"Parsing took {tp1 - tp0:.2f} seconds.")
 
     try:
+        tb0 = time.perf_counter()
         bm25_index = BM25Index.build(functions)
+        tb1 = time.perf_counter()
+
+        tv0 = time.perf_counter()
         vector_index = VectorIndex.build(
             functions,
             persist=True,
             collection_name=project_hash,
             persist_path=CHROMA_DIR,
         )
+        tv1 = time.perf_counter()
+
+        tg0 = time.perf_counter()
         graph_index = GraphIndex.build(functions)
+        tg1 = time.perf_counter()
+
+        if timings:
+            typer.echo(f"BM25 index built in {tb1 - tb0:.2f} seconds.")
+            typer.echo(f"Vector index built in {tv1 - tv0:.2f} seconds.")
+            typer.echo(f"Graph index built in {tg1 - tg0:.2f} seconds.")
 
         bm25_index.save(BM25_DIR / f"{project_hash}.pkl")
         graph_index.save(GRAPH_DIR / f"{project_hash}.pkl")

@@ -59,6 +59,8 @@ def run_queries(
         try:
             vector_results = vector_retriever.search(query_text)
         except Exception:
+            import traceback
+            traceback.print_exc()
             vector_results = []
 
         seeds = bm25_results[:10] + vector_results[:10]
@@ -150,7 +152,7 @@ def print_table(results: dict[str, dict[str, float]]) -> None:
 def main():
     queries = load_queries(QUERIES_PATH)
     bm25_retriever, vector_retriever, graph_retriever = setup()
-    fuser = Fuser(bm25_weight=0.8, vector_weight=1.0, structural_weight=0.0)
+    fuser = Fuser(bm25_weight=0.7, vector_weight=1.0, structural_weight=0.1)
     all_results = run_queries(queries, bm25_retriever, vector_retriever, graph_retriever, fuser)
     final_metrics = evaluate(queries, all_results)
     print_table(final_metrics)

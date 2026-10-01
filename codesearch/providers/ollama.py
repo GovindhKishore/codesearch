@@ -19,5 +19,7 @@ class OllamaProvider(BaseProvider):
 
             return response.response if response.response else None
 
-        except Exception:
+
+        except Exception as e:
+            print(f"Error {e}: \n\n Skipping reranking, showing fused results.")
             return None

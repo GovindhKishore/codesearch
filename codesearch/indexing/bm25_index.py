@@ -59,7 +59,10 @@ class BM25Index:
         path = Path(path)
 
         with path.open("rb") as f:
-            obj = pickle.load(f)
+            try:
+                obj = pickle.load(f)
+            except (EOFError, pickle.UnpicklingError, AttributeError, ModuleNotFoundError, FileNotFoundError) as e:
+                raise ValueError(f"Index at {path} is corrupted or outdated. Try running 'codesearch reindex' to fix.") from e
 
         if not isinstance(obj, cls):
             raise TypeError(f"Pickle at {path} did not contain a BM25Index")

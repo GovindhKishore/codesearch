@@ -28,6 +28,7 @@ class BM25Retriever:
                 file=func.file,
                 line=func.line,
                 doc_string=func.doc_string,
+                class_name=func.class_name,
                 params=[],
                 return_type=func.return_type,
                 callees=[],
@@ -36,7 +37,7 @@ class BM25Retriever:
 
 
             scored_functions.append(ScoredFunction(
-                function=func,
+                function=minimal_function,
                 score=score,
                 rank=rank,
                 retriever="bm25"

@@ -8,6 +8,8 @@ from chromadb.errors import NotFoundError
 from codesearch.parsing.parser import FunctionInfo
 
 DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
+CHROMA_BATCH_SIZE = 4000
+
 
 @dataclass
 class VectorIndex:
@@ -53,20 +55,25 @@ class VectorIndex:
 
         ids = [f"{func.file.as_posix()}:{func.name}:{func.line}" for func in functions]
         documents = [func.composite_doc for func in functions]
-        embeddings = model.encode(documents, show_progress_bar=False).tolist()
+        embeddings = model.encode(documents, batch_size=256, show_progress_bar=False).tolist()
         metadatas = [
             {
                 "file": func.file.as_posix(),
                 "name": func.name,
                 "line": func.line,
                 "doc_string": func.doc_string if func.doc_string is not None else "",
-                "callers": ",".join(func.callers),
-                "callees": ",".join(func.callees),
+                "class_name": func.class_name if func.class_name is not None else "",
             }
             for func in functions
         ]
 
-        collection.add(ids=ids, embeddings=embeddings, metadatas=metadatas, documents=documents)
+        for i in range(0, len(ids), CHROMA_BATCH_SIZE):
+            collection.add(
+                ids=ids[i:i + CHROMA_BATCH_SIZE],
+                embeddings=embeddings[i:i + CHROMA_BATCH_SIZE],
+                metadatas=metadatas[i:i + CHROMA_BATCH_SIZE],
+                documents=documents[i:i + CHROMA_BATCH_SIZE],
+            )
 
         return cls(collection=collection, model=model, model_name=model_name)
 
@@ -83,9 +90,10 @@ class VectorIndex:
 
         try:
             collection = client.get_collection(name=collection_name)
-        except Exception as e:
+        except NotFoundError as e:
             raise ValueError(
                 f"No collection named '{collection_name}' found at: {persist_path}"
+                f"Try running 'codesearch reindex' to fix."
             ) from e
 
         if model_name == DEFAULT_MODEL_NAME:

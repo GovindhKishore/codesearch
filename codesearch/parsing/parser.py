@@ -64,7 +64,7 @@ class CodebaseParser:
     def parse_file(self, filepath: Path) -> list[FunctionInfo]:
         try:
             source = filepath.read_text(encoding="utf-8")
-            tree = ast.parse(source)
+            tree = ast.parse(source, filename=str(filepath))
         except (SyntaxError, ValueError, UnicodeDecodeError, OSError):
             return []
 

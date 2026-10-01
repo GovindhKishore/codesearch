@@ -2,7 +2,7 @@ from google import genai
 from google.genai import types
 from codesearch.providers.base import BaseProvider
 
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 
 class GeminiProvider(BaseProvider):
@@ -19,5 +19,6 @@ class GeminiProvider(BaseProvider):
             )
             return response.text if response.text else None
 
-        except Exception:
+        except Exception as e:
+            print(f"Error {e}: \n\n Skipping reranking, showing fused results.")
             return None

@@ -32,6 +32,7 @@ class VectorRetriever:
                 file=Path(meta["file"]),
                 line=meta["line"],
                 doc_string=meta["doc_string"],
+                class_name=meta["class_name"] if meta["class_name"] else None,
                 params=[],
                 return_type=None,
                 callees=[],

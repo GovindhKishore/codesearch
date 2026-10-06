@@ -3,11 +3,15 @@ from pathlib import Path
 import hashlib, json
 import os
 import time
+
+from rich.console import Console
+from rich.markup import escape
 from codesearch.parsing.parser import CodebaseParser
 from codesearch.indexing.bm25_index import BM25Index
 from codesearch.indexing.vector_index import VectorIndex
 from codesearch.indexing.graph_index import GraphIndex
 from codesearch.retrieval.bm25_retriever import BM25Retriever
+from codesearch.retrieval.types import ScoredFunction
 from codesearch.retrieval.vector_retriever import VectorRetriever
 from codesearch.retrieval.graph_retriever import GraphRetriever
 from codesearch.pipeline.fusion import Fuser
@@ -25,6 +29,9 @@ VALID_KEY_PROVIDERS = {"gemini"}
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
+console = Console(highlight=False, soft_wrap=True)
+error_console = Console(stderr=True, highlight=False, soft_wrap=True)
+
 def compute_project_hash(folder: Path) -> str:
     return hashlib.sha256(folder.as_posix().encode("utf-8")).hexdigest()
 
@@ -34,14 +41,14 @@ def load_registry() -> dict:
     try:
         return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-        typer.echo(f"Warning: {REGISTRY_PATH} is corrupted and could not be read. Treating as empty.")
+        error_console.print(f"[bold yellow]Warning: [/bold yellow] {REGISTRY_PATH} is corrupted and could not be read.Treating as empty.")
         return {}
 
 def save_registry(registry: dict) -> None:
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
     REGISTRY_PATH.write_text(json.dumps(registry, indent=2), encoding="utf-8")
 
-def get_file_mtimes(folder: Path) -> dict[str, float]:
+def get_file_mtimes(folder: Path, include_tests: bool) -> dict[str, float]:
     skip_dirs = {
         "__pycache__", ".git", "venv", ".venv", "node_modules", "dist", "build",
         ".eggs", "egg-info", ".idea", ".vscode", ".pytest_cache", ".mypy_cache",
@@ -51,10 +58,15 @@ def get_file_mtimes(folder: Path) -> dict[str, float]:
     file_mtimes: dict[str, float] = {}
 
     for dirpath, sub_dirnames, filenames in os.walk(folder):
-        sub_dirnames[:] = [d for d in sub_dirnames if d not in skip_dirs]
+        sub_dirnames[:] = [
+            d for d in sub_dirnames
+            if (d not in skip_dirs and (include_tests or d not in {"tests", "test"}))
+        ]
 
         for filename in filenames:
             if filename.endswith(".py"):
+                if not include_tests and (filename.startswith("test_") or filename.endswith("_test.py")):
+                    continue
                 filepath = Path(dirpath) / filename
                 file_mtimes[filepath.as_posix()] = filepath.stat().st_mtime
 
@@ -66,17 +78,18 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
 
         registry = load_registry()
         if project_hash not in registry:
-            typer.echo(f"{folder} is not indexed. Run 'codesearch index {folder}' first.")
+            error_console.print(f"[bold yellow]Warning: [/bold yellow]{escape(str(folder))} is not indexed. Run 'codesearch index {folder}' first.")
             raise typer.Exit(code=1)
 
         indexed_project = registry[project_hash]
+        include_tests = indexed_project["include_tests"]
 
-        current_mtimes = get_file_mtimes(folder)
+        current_mtimes = get_file_mtimes(folder, include_tests=include_tests)
         if current_mtimes != indexed_project["file_mtimes"]:
-            typer.echo(f"Files in {folder} have changed since last index.")
+            error_console.print(f"[bold yellow]Warning: [/bold yellow]Files in {escape(str(folder))} have changed since last index.")
             proceed = typer.confirm("Search anyway with the existing index?", default=True)
             if not proceed:
-                typer.echo(f"Run 'codesearch reindex {folder}' to update.")
+                console.print(f"Run 'codesearch reindex {escape(str(folder))}' to update.")
                 raise typer.Exit(code=0)
 
         try:
@@ -97,7 +110,7 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
             tg1 = time.perf_counter()
 
         except Exception as e:
-            typer.echo(f"Failed to load indexes: {e}")
+            error_console.print(f"[b red]Error:[/b red] Failed to load indexes: {e}")
             raise typer.Exit(code=1)
 
         return bm25_index, vector_index, graph_index, tb1 - tb0, tv1 - tv0, tg1 - tg0
@@ -107,7 +120,7 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
         functions = parser.parse_dir(folder)
 
         if not functions:
-            typer.echo(f"No functions found in {folder}. Nothing to index.")
+            console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
             raise typer.Exit(code=1)
 
         try:
@@ -124,39 +137,106 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
             ttg1 = time.perf_counter()
 
         except Exception as e:
-            typer.echo(f"Failed to build indexes: {e}")
+            error_console.print(f"[b red]Error:[/b red] Failed to build indexes: {e}")
             raise typer.Exit(code=1)
 
         return bm25_index, vector_index, graph_index, ttb1 - ttb0, ttv1 - ttv0, ttg1 - ttg0
 
+
+def search_helper(bm25_retriever: BM25Retriever,
+                  vector_retriever: VectorRetriever,
+                  graph_retriever: GraphRetriever,
+                  fuser: Fuser,
+                  query: str,
+                  max_hop: int,
+                  decay_factor: float,
+                  timings : bool = False) -> list[ScoredFunction]:
+    tbs0 = time.perf_counter()
+    bm25_results = bm25_retriever.search(query)
+    tbs1 = time.perf_counter()
+
+    tvs0 = 0.0
+    tvs1 = 0.0
+    try:
+        tvs0 = time.perf_counter()
+        vector_results = vector_retriever.search(query)
+        tvs1 = time.perf_counter()
+    except Exception as e:
+        error_console.print(f"[bold yellow]Warning: [/bold yellow]Vector search failed ({e}), continuing with keyword + structural search only.")
+        vector_results = []
+
+    seeds = bm25_results[:5] + vector_results[:5]
+
+    tgs0 = time.perf_counter()
+    graph_results = graph_retriever.search(seeds, max_hop=max_hop, decay_factor=decay_factor)
+    tgs1 = time.perf_counter()
+
+    if timings:
+        console.print()
+        console.print(f"[dim]BM25 search took [cyan]{tbs1 - tbs0:.2f}[/cyan] seconds.[/dim]")
+        if tvs1 != 0.0:
+            console.print(f"[dim]Vector search took [cyan]{tvs1 - tvs0:.2f}[/cyan] seconds.[/dim]")
+        console.print(f"[dim]Graph search took [cyan]{tgs1 - tgs0:.2f}[/cyan] seconds.[/dim]")
+
+    fused_results = fuser.fuse(bm25_results, vector_results, graph_results)
+    rerank_candidates = fused_results[:20]
+
+    return rerank_candidates
+
+
+def rerank_results(query: str, candidates: list[ScoredFunction], reranker: Reranker, skip_reason: str, top_n: int, timings: bool) -> list[ScoredFunction]:
+    if reranker is None:
+        console.print()
+        error_console.print(f"[bold yellow]Warning: [/bold yellow]{skip_reason} Skipping reranking, showing fused results.")
+        return candidates[:top_n]
+
+    tr0 = time.perf_counter()
+    final = reranker.rerank(query, candidates)
+    tr1 = time.perf_counter()
+
+    if timings:
+        console.print(f"[dim]Reranking took [cyan]{tr1 - tr0:.2f}[/cyan] seconds.[/dim]")
+    return final
+
+
+def print_results(query: str, final_results: list[ScoredFunction]) -> None:
+    console.print(f"\nResults for: \"{query}\"\n")
+    for i, result in enumerate(final_results, start=1):
+        func = result.function
+        console.print(f"[cyan]{i}[/cyan]. {func.name}    {escape(func.file.as_posix())}:{func.line}")
+        if result.explanation:
+            console.print(f"   {result.explanation}")
+        console.print()
 
 
 app = typer.Typer()
 
 
 @app.command()
-def index(folder: Path, timings: bool = False):
+def index(folder: Path, timings: bool = False, include_tests: bool = False):
     folder = folder.resolve()
     project_hash = compute_project_hash(folder)
 
     registry = load_registry()
     if project_hash in registry:
-        typer.echo(f"Already indexed: {folder}. Run 'codesearch reindex' to rebuild.")
+        console.print(f"Already indexed: {escape(str(folder))}. Run 'codesearch reindex' to rebuild.")
         raise typer.Exit(code=0)
 
-    parser = CodebaseParser()
+    parser = CodebaseParser(include_tests=include_tests)
 
     tp0 = time.perf_counter()
     functions = parser.parse_dir(folder)
     tp1 = time.perf_counter()
 
     if not functions:
-        typer.echo(f"No functions found in {folder}. Nothing to index.")
+        console.print()
+        error_console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
         raise typer.Exit(code=1)
 
-    typer.echo(f"Parsed {len(functions)} functions. Building indexes...")
+    console.print()
+    console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions. Building indexes...")
     if timings:
-        typer.echo(f"Parsing took {tp1 - tp0:.2f} seconds.")
+        console.print(f"[dim]Parsing took [cyan]{tp1 - tp0:.2f}[/cyan] seconds.[/dim]")
 
     try:
         tb0 = time.perf_counter()
@@ -177,35 +257,35 @@ def index(folder: Path, timings: bool = False):
         tg1 = time.perf_counter()
 
         if timings:
-            typer.echo(f"BM25 index built in {tb1 - tb0:.2f} seconds.")
-            typer.echo(f"Vector index built in {tv1 - tv0:.2f} seconds.")
-            typer.echo(f"Graph index built in {tg1 - tg0:.2f} seconds.")
+            console.print(f"[dim]BM25 index built in [cyan]{tb1 - tb0:.2f}[/cyan] seconds.[/dim]")
+            console.print(f"[dim]Vector index built in [cyan]{tv1 - tv0:.2f}[/cyan] seconds.[/dim]")
+            console.print(f"[dim]Graph index built in [cyan]{tg1 - tg0:.2f}[/cyan] seconds.[/dim]")
 
         bm25_index.save(BM25_DIR / f"{project_hash}.pkl")
         graph_index.save(GRAPH_DIR / f"{project_hash}.pkl")
     except Exception as e:
-        typer.echo(f"Failed to build indexes: {e}")
+        error_console.print(f"[b red]Error: [/b red]Failed to build indexes: {e}")
         raise typer.Exit(code=1)
 
-    file_mtimes = get_file_mtimes(folder)
+    file_mtimes = get_file_mtimes(folder, include_tests)
     registry[project_hash] = {
         "folder": folder.as_posix(),
         "vector_index_embedding_model": vector_index.model_name,
         "file_mtimes": file_mtimes,
+        "include_tests": include_tests,
     }
 
     try:
         save_registry(registry)
     except (OSError, TypeError) as e:
-        typer.echo(f"Indexes were built but failed to update registry: {e}")
+        error_console.print(f"[b red]Error: [/b red]Indexes were built but failed to update registry: {e}")
         raise typer.Exit(code=1)
 
-    typer.echo(f"Indexed and saved {len(functions)} functions from {folder}.")
+    console.print(f"[b green]Success: [/b green]Indexed and saved [cyan]{len(functions)}[/cyan] functions from {escape(str(folder))}.")
 
 
 @app.command()
 def search(
-        query: str,
         folder: Path,
         no_index: bool = False,
         bm25_weight: float = 0.7,
@@ -222,140 +302,107 @@ def search(
     bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index)
 
     if timings:
-        typer.echo(f"BM25 index load took {blt:.2f} seconds.")
-        typer.echo(f"Vector index load took {vlt:.2f} seconds.")
-        typer.echo(f"Graph index load took {glt:.2f} seconds.")
+        console.print()
+        console.print(f"[dim]BM25 index load took [cyan]{blt:.2f}[/cyan] seconds.[/dim]")
+        console.print(f"[dim]Vector index load took [cyan]{vlt:.2f}[/cyan] seconds.[/dim]")
+        console.print(f"[dim]Graph index load took [cyan]{glt:.2f}[cyan] seconds.[/dim]")
 
     bm25_retriever = BM25Retriever(bm25_index)
     vector_retriever = VectorRetriever(vector_index)
     graph_retriever = GraphRetriever(graph_index)
-
-    tbs0 = time.perf_counter()
-    bm25_results = bm25_retriever.search(query)
-    tbs1 = time.perf_counter()
-
-    tvs0 = 0.0
-    tvs1 = 0.0
-    try:
-        tvs0 = time.perf_counter()
-        vector_results = vector_retriever.search(query)
-        tvs1 = time.perf_counter()
-    except Exception as e:
-        typer.echo(f"Vector search failed ({e}), continuing with keyword + structural search only.")
-        vector_results = []
-
-    seeds = bm25_results[:10] + vector_results[:10]
-
-    tgs0 = time.perf_counter()
-    graph_results = graph_retriever.search(seeds, max_hop=max_hop, decay_factor=decay_factor)
-    tgs1 = time.perf_counter()
-
-    if timings:
-        typer.echo(f"BM25 search took {tbs1 - tbs0:.2f} seconds.")
-        if tvs1 != 0.0:
-            typer.echo(f"Vector search took {tvs1 - tvs0:.2f} seconds.")
-        typer.echo(f"Graph search took {tgs1 - tgs0:.2f} seconds.")
-
     fuser = Fuser(
         bm25_weight=bm25_weight,
         vector_weight=vector_weight,
         structural_weight=structural_weight,
     )
-    fused_results = fuser.fuse(bm25_results, vector_results, graph_results)
-    rerank_candidates = fused_results[:20]
+
+    reranker, skip_reason = None, None
 
     if provider is None:
-        typer.echo("No provider specified. Skipping reranking, showing fused results.")
-        final_results = rerank_candidates[:top_n]
+        skip_reason = "No provider specified."
     elif provider == "gemini":
         api_key = config.get_api_key("gemini")
         if api_key is None:
-            typer.echo("No Gemini API key found. Skipping reranking, showing fused results.")
-            final_results = rerank_candidates[:top_n]
+            skip_reason = "No Gemini API key found."
         else:
-            gemini_provider = GeminiProvider(api_key=api_key)
-            reranker = Reranker(provider=gemini_provider, top_n=top_n)
-
-            tge0 = time.perf_counter()
-            final_results = reranker.rerank(query, rerank_candidates)
-            tge1 = time.perf_counter()
-
-            if timings:
-                typer.echo(f"Reranking using Gemini took {tge1 - tge0:.2f} seconds.")
+            reranker = Reranker(provider=GeminiProvider(api_key=api_key), top_n=top_n)
     elif provider == "ollama":
-        ollama_provider = OllamaProvider()
-        reranker = Reranker(provider=ollama_provider, top_n=top_n)
-
-        toll0 = time.perf_counter()
-        final_results = reranker.rerank(query, rerank_candidates)
-        toll1 = time.perf_counter()
-
-        if timings:
-            typer.echo(f"Reranking using Ollama took {toll1 - toll0:.2f} seconds.")
+        reranker = Reranker(provider=OllamaProvider(), top_n=top_n)
     else:
-        typer.echo(f"Unknown provider: {provider}. Skipping reranking, showing fused results.")
-        final_results = rerank_candidates[:top_n]
+        skip_reason = f"Unknown provider: {provider}."
+
+    while True:
+        try:
+            console.print()
+            query = typer.prompt("Query").strip()
+        except typer.Abort:
+            break
+        if query.lower() in {"exit", "quit"}:
+            break
+        if not query:
+            continue
+
+        rerank_candidates = search_helper(bm25_retriever, vector_retriever, graph_retriever, fuser, query, max_hop, decay_factor, timings)
+
+        final_results = rerank_results(query, rerank_candidates, reranker, skip_reason, top_n, timings)
+
+        if not final_results:
+            console.print()
+            console.print("No relevant results found.")
+            continue
+
+        print_results(query, final_results)
 
 
-    if not final_results:
-        typer.echo("No relevant results found.")
-        return
-
-    typer.echo(f"\nResults for: \"{query}\"\n")
-    for i, result in enumerate(final_results, start=1):
-        func = result.function
-        typer.echo(f"{i}. {func.name}    {func.file.as_posix()}:{func.line}")
-        if result.explanation:
-            typer.echo(f"   {result.explanation}")
-        typer.echo()
 
 
 
 @app.command()
 def set_api_key(provider: str, api_key: str):
     if provider not in VALID_KEY_PROVIDERS:
-        typer.echo(f"Unknown provider: {provider}. Valid options: {', '.join(VALID_KEY_PROVIDERS)}")
+        error_console.print(f"[b red]Error: [/b red]Unknown provider: {provider}. Valid options: {', '.join(VALID_KEY_PROVIDERS)}")
         raise typer.Exit(code=1)
 
     if config.set_api_key(provider, api_key):
-        typer.echo(f"API key saved for {provider}.")
+        console.print(f"[b green]Success: [/b green]API key saved for {provider}.")
     else:
-        typer.echo(f"Failed to save API key for {provider}.")
+        error_console.print(f"[b red]Error:[/b red] Failed to save API key for {provider}.")
         raise typer.Exit(code=1)
 
 
 @app.command()
 def get_api_key(provider: str):
     if provider not in VALID_KEY_PROVIDERS:
-        typer.echo(f"Unknown provider: {provider}. Valid providers: {', '.join(VALID_KEY_PROVIDERS)}")
+        error_console.print(f"[b red]Error: [/b red]Unknown provider: {provider}. Valid providers: {', '.join(VALID_KEY_PROVIDERS)}")
         raise typer.Exit(code=1)
 
     api_key = config.get_api_key(provider)
     if api_key is None:
-        typer.echo(f"No API key configured for {provider}.")
+        error_console.print(f"No API key configured for {provider}.")
     else:
-        typer.echo(f"{provider} API key: {api_key}")
+        masked = "..." + api_key[-4: ] if len(api_key) > 8 else "..."
+        console.print(f"[b green]Success: [/b green]{provider} API key Found: {masked}")
 
 
 @app.command()
 def clear_api_key(provider: str):
     if provider not in VALID_KEY_PROVIDERS:
-        typer.echo(f"Unknown provider: {provider}. Valid providers: {', '.join(VALID_KEY_PROVIDERS)}")
+        error_console.print(f"[b red]Error: [/b red]Unknown provider: {provider}. Valid providers: {', '.join(VALID_KEY_PROVIDERS)}")
         raise typer.Exit(code=1)
 
     if config.clear_api_key(provider):
-        typer.echo(f"API key cleared for {provider}.")
+        console.print(f"[b green]Success: [/b green]API key cleared for {provider}.")
     else:
-        typer.echo(f"No API key was set for {provider}, or it could not be cleared.")
+        error_console.print(f"[b yellow]Warning: [/b yellow]No API key was set for {provider}, or it could not be cleared.")
 
 
 @app.command()
 def clear(folder: Path | None = None, all_items: bool = False):
     if not folder and not all_items:
-        typer.echo("Provide a folder to clear, or use --all_items to clear everything.")
+        error_console.print("[b yellow]Warning: [/ b yellow]Provide a folder to clear, or use --all-items to clear everything.")
         raise typer.Exit(code=1)
     if folder and all_items:
-        typer.echo("Provide either a folder or --all_items.")
+        error_console.print("[b yellow]Warning: [/b yellow]Provide either a folder or --all-items.")
         raise typer.Exit(code=1)
 
     registry = load_registry()
@@ -366,7 +413,7 @@ def clear(folder: Path | None = None, all_items: bool = False):
         folder = folder.resolve()
         project_hash = compute_project_hash(folder)
         if project_hash not in registry:
-            typer.echo(f"{folder} is not indexed. Nothing to clear.")
+            error_console.print(f"[b yellow]Warning: [/b yellow]{escape(str(folder))} is not indexed. Nothing to clear.")
             raise typer.Exit(code=0)
         hashes_to_clear = [project_hash]
 
@@ -379,31 +426,31 @@ def clear(folder: Path | None = None, all_items: bool = False):
     try:
         save_registry(registry)
     except (OSError, TypeError) as e:
-        typer.echo(f"Indexes were cleared but failed to update registry: {e}")
+        error_console.print(f"[b red]Error: [/b red]Indexes were cleared but failed to update registry: {e}")
         raise typer.Exit(code=1)
 
-    typer.echo(f"Cleared {len(hashes_to_clear)} project(s).")
+    console.print(f"[b green]Success: [/b green]Cleared [cyan]{len(hashes_to_clear)}[/cyan] project(s).")
 
 
 @app.command()
-def reindex(folder: Path, timings: bool = False):
+def reindex(folder: Path, timings: bool = False, include_tests: bool = False):
     folder = folder.resolve()
     project_hash = compute_project_hash(folder)
 
-    parser = CodebaseParser()
+    parser = CodebaseParser(include_tests=include_tests)
 
     tp0 = time.perf_counter()
     functions = parser.parse_dir(folder)
     tp1 = time.perf_counter()
 
     if not functions:
-        typer.echo(f"No functions found in {folder}. Nothing to index.")
+        error_console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
         raise typer.Exit(code=1)
 
 
-    typer.echo(f"Parsed {len(functions)} functions. Building indexes...")
+    console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions. Building indexes...")
     if timings:
-        typer.echo(f"Parsing took {tp1 - tp0:.2f} seconds.")
+        console.print(f"[dim]Parsing took [cyan]{tp1 - tp0:.2f}[/cyan] seconds.[/dim]")
 
     try:
         tb0 = time.perf_counter()
@@ -424,32 +471,33 @@ def reindex(folder: Path, timings: bool = False):
         tg1 = time.perf_counter()
 
         if timings:
-            typer.echo(f"BM25 index built in {tb1 - tb0:.2f} seconds.")
-            typer.echo(f"Vector index built in {tv1 - tv0:.2f} seconds.")
-            typer.echo(f"Graph index built in {tg1 - tg0:.2f} seconds.")
+            console.print(f"[dim]BM25 index built in [cyan]{tb1 - tb0:.2f}[/cyan] seconds.[/dim]")
+            console.print(f"[dim]Vector index built in [cyan]{tv1 - tv0:.2f}[/cyan] seconds.[/dim]")
+            console.print(f"[dim]Graph index built in [cyan]{tg1 - tg0:.2f}[/cyan] seconds.[/dim]")
 
         bm25_index.save(BM25_DIR / f"{project_hash}.pkl")
         graph_index.save(GRAPH_DIR / f"{project_hash}.pkl")
     except Exception as e:
-        typer.echo(f"Failed to build indexes: {e}")
+        error_console.print(f"[b red]Error: [/b red]Failed to build indexes: {e}")
         raise typer.Exit(code=1)
 
-    file_mtimes = get_file_mtimes(folder)
+    file_mtimes = get_file_mtimes(folder, include_tests)
     registry = load_registry()
 
     registry[project_hash] = {
         "folder": folder.as_posix(),
         "vector_index_embedding_model": vector_index.model_name,
         "file_mtimes": file_mtimes,
+        "include_tests": include_tests,
     }
 
     try:
         save_registry(registry)
     except (OSError, TypeError) as e:
-        typer.echo(f"Indexes were built but failed to update registry: {e}")
+        error_console.print(f"[b red]Error: [/b red]Indexes were built but failed to update registry: {e}")
         raise typer.Exit(code=1)
 
-    typer.echo(f"Indexed and saved {len(functions)} functions from {folder}.")
+    console.print(f"[b green]Success: [/b green]Indexed and saved [cyan]{len(functions)}[/cyan] functions from {escape(str(folder))}.")
 
 
 if __name__ == "__main__":

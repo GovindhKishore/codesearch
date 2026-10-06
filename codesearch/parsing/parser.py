@@ -25,22 +25,30 @@ class FunctionInfo:
     composite_doc: str = field(default="", repr=False)
 
 class CodebaseParser:
+    TEST_DIRS = {"tests", "test"}
 
-    def __init__(self, skip_dirs: set[str] | None = None):
+    def __init__(self, include_tests, skip_dirs: set[str] | None = None):
         self.skip_dirs = skip_dirs or {
             "__pycache__", ".git", "venv", ".venv", "node_modules", "dist", "build",
             ".eggs", "egg-info", ".idea", ".vscode", ".pytest_cache", ".mypy_cache",
             ".tox", "htmlcov",
         }
 
+        self.include_tests = include_tests
+
     def parse_dir(self, folder: Path) -> list[FunctionInfo]:
         all_functions = []
         name_fninfo_map = defaultdict(list)
 
         for dirpath, dirnames, filenames in os.walk(folder):
-            dirnames[:] = [d for d in dirnames if d not in self.skip_dirs]
+            dirnames[:] = [
+                d for d in dirnames
+                if (d not in self.skip_dirs and (self.include_tests or d not in CodebaseParser.TEST_DIRS))
+            ]
             for filename in filenames:
                 if not filename.endswith(".py"):
+                    continue
+                if not self.include_tests and (filename.startswith("test_") or filename.endswith("_test.py")):
                     continue
                 filepath = Path(dirpath) / filename
                 file_functions = self.parse_file(filepath)

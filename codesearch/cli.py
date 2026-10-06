@@ -179,7 +179,7 @@ def search_helper(bm25_retriever: BM25Retriever,
         console.print(f"[dim]Graph search took [cyan]{tgs1 - tgs0:.2f}[/cyan] seconds.[/dim]")
 
     fused_results = fuser.fuse(bm25_results, vector_results, graph_results)
-    rerank_candidates = fused_results[:20]
+    rerank_candidates = fused_results[:15]
 
     return rerank_candidates
 

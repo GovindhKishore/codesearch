@@ -43,7 +43,7 @@ def setup() -> tuple[BM25Retriever, VectorRetriever, GraphRetriever]:
     return bm25_retriever, vector_retriever, graph_retriever
 
 
-GRAPH_MAX_HOP = 2
+GRAPH_MAX_HOP = 1
 GRAPH_CAP = 10
 SEED_COUNT = 10
 
@@ -208,8 +208,8 @@ def print_table(results: dict[str, dict[str, float]]) -> None:
 def main():
     queries = load_queries(QUERIES_PATH)
     bm25_retriever, vector_retriever, graph_retriever = setup()
-    fuser = Fuser(bm25_weight=1.0, vector_weight=1.0, structural_weight=0.5)
-    fuser_no_graph = Fuser(bm25_weight=1.0, vector_weight=1.0, structural_weight=0.0)
+    fuser = Fuser(bm25_weight=0.9, vector_weight=1.0, structural_weight=0.3)
+    fuser_no_graph = Fuser(bm25_weight=0.9, vector_weight=1.0, structural_weight=0.0)
     all_results = run_queries(queries, bm25_retriever, vector_retriever, graph_retriever, fuser, fuser_no_graph)
     final_metrics = evaluate(queries, all_results)
     print_table(final_metrics)

@@ -14,48 +14,43 @@ class GraphRetriever:
     def search(self, seeds: list[ScoredFunction], max_hop: int = 1, decay_factor: float = 0.5) -> list[ScoredFunction]:
             seed_names = {(s.function.name, s.function.class_name) for s in seeds}
             reversed_graph = self.index.graph.reverse()
-            min_hops: dict[tuple[str, str | None], int] = {}
 
-            self._update_min_hops(self.index.graph, seed_names, max_hop, min_hops)
-            self._update_min_hops(reversed_graph, seed_names, max_hop, min_hops)
+            seed_to_callees = self._reach_from_seeds(self.index.graph, seed_names, max_hop)
+            seed_to_callers = self._reach_from_seeds(reversed_graph, seed_names, max_hop)
 
-            seed_connections: dict[tuple[str, str | None], int] = {}
+            return self._build_scored_function(seed_to_callees, seed_to_callers, decay_factor)
 
-            for seed in seed_names:
-                if not self.index.graph.has_node(seed):
-                    continue
-
-                reachable = nx.single_source_shortest_path_length(
-                    self.index.graph,
-                    seed,
-                    cutoff=max_hop,
-                )
-
-                for node in reachable:
-                    if node != seed:
-                        seed_connections[node] = seed_connections.get(node, 0) + 1
-
-            return self._build_scored_function(min_hops, decay_factor, seed_connections)
-
-    def _update_min_hops(self, graph, seed_names: set[tuple[str, str | None]], max_hop: int, min_hops: dict[tuple[str, str | None], int]) -> None:
-        valid_sources = [s for s in seed_names if graph.has_node(s)]
-        for current_hop, layer_nodes in enumerate(nx.bfs_layers(graph, valid_sources)):
-            if current_hop == 0:
+    def _reach_from_seeds(self, graph, seeds, max_hop):
+        reach = {}
+        for seed in seeds:
+            if not graph.has_node(seed):
                 continue
-            if current_hop > max_hop:
-                break
-            for node in layer_nodes:
-                if node not in min_hops or current_hop < min_hops[node]:
-                    min_hops[node] = current_hop
+            dists = nx.single_source_shortest_path_length(graph, seed, cutoff=max_hop)
+            for node, d in dists.items():
+                if d == 0:
+                    continue
+                if node not in reach:
+                    reach[node] = {}
+                reach[node][seed] = d
+        return reach
 
-    def _build_scored_function(self, min_hops: dict[tuple[str, str | None], int], decay_factor: float, seed_connections: dict[tuple[str, str | None], int]) -> list[ScoredFunction]:
+    def _build_scored_function(self, seed_to_callees, seed_to_callers  , decay_factor: float) -> list[ScoredFunction]:
+
+        merged = {}
+        for part in (seed_to_callees, seed_to_callers):
+            for node, per_seed in part.items():
+                if node not in merged:
+                    merged[node] = {}
+                for seed, d in per_seed.items():
+                    if seed not in merged[node] or d < merged[node][seed]:
+                        merged[node][seed] = d
+
         scored_functions = []
-        for (name, class_name), hop in min_hops.items():
+        for (name, class_name), per_seed in merged.items():
             node_data = self.index.graph.nodes[(name, class_name)]
             in_degree = self.index.graph.in_degree((name, class_name))
-            seeds_call_count = seed_connections.get((name, class_name), 0)
 
-            score = seeds_call_count * ((decay_factor ** hop) / math.log(2 + in_degree))
+            score = (sum(decay_factor ** d for d in per_seed.values()))
 
             function = FunctionInfo(
                 name=name,

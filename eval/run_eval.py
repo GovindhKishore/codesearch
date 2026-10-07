@@ -43,7 +43,7 @@ def setup() -> tuple[BM25Retriever, VectorRetriever, GraphRetriever]:
     return bm25_retriever, vector_retriever, graph_retriever
 
 
-GRAPH_MAX_HOP = 1
+GRAPH_MAX_HOP = 2
 GRAPH_CAP = 10
 SEED_COUNT = 10
 

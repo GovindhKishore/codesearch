@@ -28,6 +28,7 @@ CHROMA_DIR = Path.home() / ".codesearch" / "chroma"
 VALID_KEY_PROVIDERS = {"gemini"}
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["HF_HUB_VERBOSITY"] = "error"
 
 console = Console(highlight=False, soft_wrap=True)
 error_console = Console(stderr=True, highlight=False, soft_wrap=True)
@@ -110,8 +111,8 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
             tg1 = time.perf_counter()
 
         except Exception as e:
-            error_console.print(f"[b red]Error:[/b red] Failed to load indexes: {e}")
-            raise typer.Exit(code=1)
+            raise RuntimeError(f"Failed to load indexes: {e}") from e
+
 
         return bm25_index, vector_index, graph_index, tb1 - tb0, tv1 - tv0, tg1 - tg0
 
@@ -137,8 +138,7 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
             ttg1 = time.perf_counter()
 
         except Exception as e:
-            error_console.print(f"[b red]Error:[/b red] Failed to build indexes: {e}")
-            raise typer.Exit(code=1)
+            raise RuntimeError(f"Failed to load indexes: {e}") from e
 
         return bm25_index, vector_index, graph_index, ttb1 - ttb0, ttv1 - ttv0, ttg1 - ttg0
 
@@ -179,7 +179,7 @@ def search_helper(bm25_retriever: BM25Retriever,
         console.print(f"[dim]Graph search took [cyan]{tgs1 - tgs0:.2f}[/cyan] seconds.[/dim]")
 
     fused_results = fuser.fuse(bm25_results, vector_results, graph_results)
-    rerank_candidates = fused_results[:15]
+    rerank_candidates = fused_results[:20]
 
     return rerank_candidates
 
@@ -191,7 +191,8 @@ def rerank_results(query: str, candidates: list[ScoredFunction], reranker: Reran
         return candidates[:top_n]
 
     tr0 = time.perf_counter()
-    final = reranker.rerank(query, candidates)
+    with console.status("Reranking...", spinner="arc"):
+        final = reranker.rerank(query, candidates)
     tr1 = time.perf_counter()
 
     if timings:
@@ -203,7 +204,7 @@ def print_results(query: str, final_results: list[ScoredFunction]) -> None:
     console.print(f"\nResults for: \"{query}\"\n")
     for i, result in enumerate(final_results, start=1):
         func = result.function
-        console.print(f"[cyan]{i}[/cyan]. {func.name}    {escape(func.file.as_posix())}:{func.line}")
+        console.print(f"[cyan]{i}[/cyan]. [b white]{func.name}[/b white]    [bright_blue]{escape(func.file.as_posix())}:{func.line}[/bright_blue]")
         if result.explanation:
             console.print(f"   {result.explanation}")
         console.print()
@@ -224,9 +225,10 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
 
     parser = CodebaseParser(include_tests=include_tests)
 
-    tp0 = time.perf_counter()
-    functions = parser.parse_dir(folder)
-    tp1 = time.perf_counter()
+    with console.status("Parsing codebase...", spinner="dots"):
+        tp0 = time.perf_counter()
+        functions = parser.parse_dir(folder)
+        tp1 = time.perf_counter()
 
     if not functions:
         console.print()
@@ -239,22 +241,24 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
         console.print(f"[dim]Parsing took [cyan]{tp1 - tp0:.2f}[/cyan] seconds.[/dim]")
 
     try:
-        tb0 = time.perf_counter()
-        bm25_index = BM25Index.build(functions)
-        tb1 = time.perf_counter()
+        console.print()
+        with console.status("Building BM25, Vector, and Graph indexes...", spinner="arc"):
+            tb0 = time.perf_counter()
+            bm25_index = BM25Index.build(functions)
+            tb1 = time.perf_counter()
 
-        tv0 = time.perf_counter()
-        vector_index = VectorIndex.build(
-            functions,
-            persist=True,
-            collection_name=project_hash,
-            persist_path=CHROMA_DIR,
-        )
-        tv1 = time.perf_counter()
+            tv0 = time.perf_counter()
+            vector_index = VectorIndex.build(
+                functions,
+                persist=True,
+                collection_name=project_hash,
+                persist_path=CHROMA_DIR,
+            )
+            tv1 = time.perf_counter()
 
-        tg0 = time.perf_counter()
-        graph_index = GraphIndex.build(functions)
-        tg1 = time.perf_counter()
+            tg0 = time.perf_counter()
+            graph_index = GraphIndex.build(functions)
+            tg1 = time.perf_counter()
 
         if timings:
             console.print(f"[dim]BM25 index built in [cyan]{tb1 - tb0:.2f}[/cyan] seconds.[/dim]")
@@ -299,7 +303,14 @@ def search(
     ):
     folder = folder.resolve()
 
-    bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index)
+    try:
+        with console.status("Fetching indexes...", spinner="arc"):
+            bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index)
+
+    except RuntimeError as e:
+        error_console.print(f"[b red]Error:[/b red] Failed to load indexes: {e}")
+        raise typer.Exit(code=1)
+
 
     if timings:
         console.print()
@@ -344,12 +355,12 @@ def search(
 
         rerank_candidates = search_helper(bm25_retriever, vector_retriever, graph_retriever, fuser, query, max_hop, decay_factor, timings)
 
-        final_results = rerank_results(query, rerank_candidates, reranker, skip_reason, top_n, timings)
-
-        if not final_results:
+        if not rerank_candidates:
             console.print()
             console.print("No relevant results found.")
             continue
+
+        final_results = rerank_results(query, rerank_candidates, reranker, skip_reason, top_n, timings)
 
         print_results(query, final_results)
 

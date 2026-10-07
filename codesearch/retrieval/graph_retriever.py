@@ -15,10 +15,16 @@ class GraphRetriever:
             seed_names = {(s.function.name, s.function.class_name) for s in seeds}
             reversed_graph = self.index.graph.reverse()
 
+            seed_rank = {}
+            for s in seeds:
+                node = (s.function.name, s.function.class_name)
+                if node not in seed_rank or s.rank < seed_rank[node]:
+                    seed_rank[node] = s.rank
+
             seed_to_callees = self._reach_from_seeds(self.index.graph, seed_names, max_hop)
             seed_to_callers = self._reach_from_seeds(reversed_graph, seed_names, max_hop)
 
-            return self._build_scored_function(seed_to_callees, seed_to_callers, decay_factor)
+            return self._build_scored_function(seed_to_callees, seed_to_callers, decay_factor, seed_rank)
 
     def _reach_from_seeds(self, graph, seeds, max_hop):
         reach = {}
@@ -34,7 +40,7 @@ class GraphRetriever:
                 reach[node][seed] = d
         return reach
 
-    def _build_scored_function(self, seed_to_callees, seed_to_callers  , decay_factor: float) -> list[ScoredFunction]:
+    def _build_scored_function(self, seed_to_callees, seed_to_callers  , decay_factor: float, seed_rank) -> list[ScoredFunction]:
 
         merged = {}
         for part in (seed_to_callees, seed_to_callers):
@@ -48,9 +54,8 @@ class GraphRetriever:
         scored_functions = []
         for (name, class_name), per_seed in merged.items():
             node_data = self.index.graph.nodes[(name, class_name)]
-            in_degree = self.index.graph.in_degree((name, class_name))
 
-            score = (sum(decay_factor ** d for d in per_seed.values()))
+            score = sum((decay_factor ** d) / seed_rank[seed] for seed, d in per_seed.items())
 
             function = FunctionInfo(
                 name=name,

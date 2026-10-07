@@ -22,9 +22,11 @@ class VectorRetriever:
         metadatas = results["metadatas"][0]
 
         scored_functions = []
+        MIN_KEEP = 10
+
         for rank, (dist, doc_id, meta) in enumerate(zip(distances, ids, metadatas), start=1):
             similarity = 1 - dist
-            if similarity < similarity_threshold:
+            if rank > MIN_KEEP and similarity < similarity_threshold:
                 continue
 
             function = FunctionInfo(

@@ -1,24 +1,19 @@
+import time
 import typer
 from pathlib import Path
 import hashlib, json
 import os
-import time
 
 from rich.console import Console
 from rich.markup import escape
+
 from codesearch.parsing.parser import CodebaseParser
-from codesearch.indexing.bm25_index import BM25Index
-from codesearch.indexing.vector_index import VectorIndex
-from codesearch.indexing.graph_index import GraphIndex
-from codesearch.retrieval.bm25_retriever import BM25Retriever
 from codesearch.retrieval.types import ScoredFunction
-from codesearch.retrieval.vector_retriever import VectorRetriever
-from codesearch.retrieval.graph_retriever import GraphRetriever
 from codesearch.pipeline.fusion import Fuser
 from codesearch.pipeline.reranker import Reranker
 from codesearch.providers.gemini import GeminiProvider
 from codesearch.providers.ollama import OllamaProvider
-from codesearch import config
+
 
 REGISTRY_PATH = Path.home() / ".codesearch" / "registry.json"
 BM25_DIR = Path.home() / ".codesearch" / "bm25"
@@ -33,6 +28,7 @@ os.environ["HF_HUB_VERBOSITY"] = "error"
 console = Console(highlight=False, soft_wrap=True)
 error_console = Console(stderr=True, highlight=False, soft_wrap=True)
 
+
 def compute_project_hash(folder: Path) -> str:
     return hashlib.sha256(folder.as_posix().encode("utf-8")).hexdigest()
 
@@ -42,7 +38,7 @@ def load_registry() -> dict:
     try:
         return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-        error_console.print(f"[bold yellow]Warning: [/bold yellow] {REGISTRY_PATH} is corrupted and could not be read.Treating as empty.")
+        error_console.print(f"[bold yellow]Warning: [/bold yellow] {REGISTRY_PATH} is corrupted and could not be read. Treating as empty.")
         return {}
 
 def save_registry(registry: dict) -> None:
@@ -73,7 +69,7 @@ def get_file_mtimes(folder: Path, include_tests: bool) -> dict[str, float]:
 
     return file_mtimes
 
-def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, GraphIndex, float, float, float]:
+def get_indexes(folder: Path, no_index: bool, include_tests: bool) -> tuple["BM25Index", "VectorIndex", "GraphIndex", float, float, float]:
     if not no_index:
         project_hash = compute_project_hash(folder)
 
@@ -94,58 +90,73 @@ def get_indexes(folder: Path, no_index: bool) -> tuple[BM25Index, VectorIndex, G
                 raise typer.Exit(code=0)
 
         try:
-            tb0 = time.perf_counter()
-            bm25_index = BM25Index.load(BM25_DIR / f"{project_hash}.pkl")
-            tb1 = time.perf_counter()
+            console.print()
+            with console.status("Fetching indexes...", spinner="arc"):
+                from codesearch.indexing.bm25_index import BM25Index
+                from codesearch.indexing.vector_index import VectorIndex
+                from codesearch.indexing.graph_index import GraphIndex
 
-            tv0 = time.perf_counter()
-            vector_index = VectorIndex.load(
-                collection_name=project_hash,
-                persist_path=CHROMA_DIR,
-                model_name=indexed_project["vector_index_embedding_model"],
-            )
-            tv1 = time.perf_counter()
+                tb0 = time.perf_counter()
+                bm25_index = BM25Index.load(BM25_DIR / f"{project_hash}.pkl")
+                tb1 = time.perf_counter()
 
-            tg0 = time.perf_counter()
-            graph_index = GraphIndex.load(GRAPH_DIR / f"{project_hash}.pkl")
-            tg1 = time.perf_counter()
+                tv0 = time.perf_counter()
+                vector_index = VectorIndex.load(
+                    collection_name=project_hash,
+                    persist_path=CHROMA_DIR,
+                    model_name=indexed_project["vector_index_embedding_model"],
+                )
+                tv1 = time.perf_counter()
+
+                tg0 = time.perf_counter()
+                graph_index = GraphIndex.load(GRAPH_DIR / f"{project_hash}.pkl")
+                tg1 = time.perf_counter()
 
         except Exception as e:
-            raise RuntimeError(f"Failed to load indexes: {e}") from e
+            error_console.print(f"[b red]Error:[/b red] Failed to load indexes: {escape(str(e))}")
+            raise typer.Exit(code=1)
 
 
         return bm25_index, vector_index, graph_index, tb1 - tb0, tv1 - tv0, tg1 - tg0
 
     else:
-        parser = CodebaseParser()
+        parser = CodebaseParser(include_tests=include_tests)
         functions = parser.parse_dir(folder)
 
         if not functions:
-            console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
+            error_console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
             raise typer.Exit(code=1)
 
         try:
-            ttb0 = time.perf_counter()
-            bm25_index = BM25Index.build(functions)
-            ttb1 = time.perf_counter()
+            console.print()
+            with console.status("Building indexes...", spinner="arc"):
+                from codesearch.indexing.bm25_index import BM25Index
+                from codesearch.indexing.vector_index import VectorIndex
+                from codesearch.indexing.graph_index import GraphIndex
 
-            ttv0 = time.perf_counter()
-            vector_index = VectorIndex.build(functions, persist=False)
-            ttv1 = time.perf_counter()
+                ttb0 = time.perf_counter()
+                bm25_index = BM25Index.build(functions)
+                ttb1 = time.perf_counter()
 
-            ttg0 = time.perf_counter()
-            graph_index = GraphIndex.build(functions)
-            ttg1 = time.perf_counter()
+                ttv0 = time.perf_counter()
+                vector_index = VectorIndex.build(functions, persist=False)
+                ttv1 = time.perf_counter()
+
+                ttg0 = time.perf_counter()
+                graph_index = GraphIndex.build(functions)
+                ttg1 = time.perf_counter()
 
         except Exception as e:
-            raise RuntimeError(f"Failed to load indexes: {e}") from e
+            error_console.print(f"[b red]Error:[/b red] Failed to build indexes: {escape(str(e))}")
+            raise typer.Exit(code=1)
+
 
         return bm25_index, vector_index, graph_index, ttb1 - ttb0, ttv1 - ttv0, ttg1 - ttg0
 
 
-def search_helper(bm25_retriever: BM25Retriever,
-                  vector_retriever: VectorRetriever,
-                  graph_retriever: GraphRetriever,
+def search_helper(bm25_retriever: "BM25Retriever",
+                  vector_retriever: "VectorRetriever",
+                  graph_retriever: "GraphRetriever",
                   fuser: Fuser,
                   query: str,
                   max_hop: int,
@@ -162,10 +173,10 @@ def search_helper(bm25_retriever: BM25Retriever,
         vector_results = vector_retriever.search(query)
         tvs1 = time.perf_counter()
     except Exception as e:
-        error_console.print(f"[bold yellow]Warning: [/bold yellow]Vector search failed ({e}), continuing with keyword + structural search only.")
+        error_console.print(f"[bold yellow]Warning: [/bold yellow]Vector search failed ({escape(str(e))}), continuing with keyword + structural search only.")
         vector_results = []
 
-    seeds = bm25_results[:5] + vector_results[:5]
+    seeds = bm25_results[:10] + vector_results[:10]
 
     tgs0 = time.perf_counter()
     graph_results = graph_retriever.search(seeds, max_hop=max_hop, decay_factor=decay_factor)
@@ -178,7 +189,7 @@ def search_helper(bm25_retriever: BM25Retriever,
             console.print(f"[dim]Vector search took [cyan]{tvs1 - tvs0:.2f}[/cyan] seconds.[/dim]")
         console.print(f"[dim]Graph search took [cyan]{tgs1 - tgs0:.2f}[/cyan] seconds.[/dim]")
 
-    fused_results = fuser.fuse(bm25_results, vector_results, graph_results)
+    fused_results = fuser.fuse(bm25_results, vector_results, graph_results[:10])
     rerank_candidates = fused_results[:20]
 
     return rerank_candidates
@@ -201,13 +212,14 @@ def rerank_results(query: str, candidates: list[ScoredFunction], reranker: Reran
 
 
 def print_results(query: str, final_results: list[ScoredFunction]) -> None:
-    console.print(f"\nResults for: \"{query}\"\n")
+    console.print(f"\nResults for: \"{escape(str(query))}\"\n")
     for i, result in enumerate(final_results, start=1):
         func = result.function
-        console.print(f"[cyan]{i}[/cyan]. [b white]{func.name}[/b white]    [bright_blue]{escape(func.file.as_posix())}:{func.line}[/bright_blue]")
+        console.print(f"[cyan]{i}[/cyan]. [b white]{func.name}[/b white]  [bright_blue]{escape(func.file.as_posix())}:{func.line}[/bright_blue]")
         if result.explanation:
-            console.print(f"   {result.explanation}")
+            console.print(f"   {escape(str(result.explanation))}")
         console.print()
+    console.print()
 
 
 app = typer.Typer()
@@ -220,12 +232,13 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
 
     registry = load_registry()
     if project_hash in registry:
-        console.print(f"Already indexed: {escape(str(folder))}. Run 'codesearch reindex' to rebuild.")
+        test_status = "test files" if registry[project_hash]["include_tests"] else "no test files"
+        console.print(f"Already indexed (with {test_status}): {escape(str(folder))}. Run 'codesearch reindex' to rebuild.")
         raise typer.Exit(code=0)
 
     parser = CodebaseParser(include_tests=include_tests)
 
-    with console.status("Parsing codebase...", spinner="dots"):
+    with console.status("Parsing codebase...", spinner="arc"):
         tp0 = time.perf_counter()
         functions = parser.parse_dir(folder)
         tp1 = time.perf_counter()
@@ -236,13 +249,17 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
         raise typer.Exit(code=1)
 
     console.print()
-    console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions. Building indexes...")
+    console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions")
     if timings:
         console.print(f"[dim]Parsing took [cyan]{tp1 - tp0:.2f}[/cyan] seconds.[/dim]")
 
     try:
         console.print()
         with console.status("Building BM25, Vector, and Graph indexes...", spinner="arc"):
+            from codesearch.indexing.bm25_index import BM25Index
+            from codesearch.indexing.vector_index import VectorIndex
+            from codesearch.indexing.graph_index import GraphIndex
+
             tb0 = time.perf_counter()
             bm25_index = BM25Index.build(functions)
             tb1 = time.perf_counter()
@@ -268,7 +285,7 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
         bm25_index.save(BM25_DIR / f"{project_hash}.pkl")
         graph_index.save(GRAPH_DIR / f"{project_hash}.pkl")
     except Exception as e:
-        error_console.print(f"[b red]Error: [/b red]Failed to build indexes: {e}")
+        error_console.print(f"[b red]Error: [/b red]Failed to build indexes: {escape(str(e))}")
         raise typer.Exit(code=1)
 
     file_mtimes = get_file_mtimes(folder, include_tests)
@@ -282,9 +299,10 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
     try:
         save_registry(registry)
     except (OSError, TypeError) as e:
-        error_console.print(f"[b red]Error: [/b red]Indexes were built but failed to update registry: {e}")
+        error_console.print(f"[b red]Error: [/b red]Indexes were built but failed to update registry: {escape(str(e))}")
         raise typer.Exit(code=1)
 
+    console.print()
     console.print(f"[b green]Success: [/b green]Indexed and saved [cyan]{len(functions)}[/cyan] functions from {escape(str(folder))}.")
 
 
@@ -292,31 +310,29 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
 def search(
         folder: Path,
         no_index: bool = False,
-        bm25_weight: float = 0.7,
+        bm25_weight: float = 0.9,
         vector_weight: float = 1.0,
-        structural_weight: float = 0.1,
-        max_hop: int = 2,
+        structural_weight: float = 0.3,
+        max_hop: int = 1,
         decay_factor: float = 0.5,
         provider: str | None = None,
         top_n: int = 10,
         timings: bool = False,
+        include_tests: bool = False
     ):
     folder = folder.resolve()
 
-    try:
-        with console.status("Fetching indexes...", spinner="arc"):
-            bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index)
-
-    except RuntimeError as e:
-        error_console.print(f"[b red]Error:[/b red] Failed to load indexes: {e}")
-        raise typer.Exit(code=1)
-
+    bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index, include_tests=include_tests)
 
     if timings:
         console.print()
         console.print(f"[dim]BM25 index load took [cyan]{blt:.2f}[/cyan] seconds.[/dim]")
         console.print(f"[dim]Vector index load took [cyan]{vlt:.2f}[/cyan] seconds.[/dim]")
-        console.print(f"[dim]Graph index load took [cyan]{glt:.2f}[cyan] seconds.[/dim]")
+        console.print(f"[dim]Graph index load took [cyan]{glt:.2f}[/cyan] seconds.[/dim]")
+
+    from codesearch.retrieval.bm25_retriever import BM25Retriever
+    from codesearch.retrieval.vector_retriever import VectorRetriever
+    from codesearch.retrieval.graph_retriever import GraphRetriever
 
     bm25_retriever = BM25Retriever(bm25_index)
     vector_retriever = VectorRetriever(vector_index)
@@ -332,6 +348,8 @@ def search(
     if provider is None:
         skip_reason = "No provider specified."
     elif provider == "gemini":
+        from codesearch import config
+
         api_key = config.get_api_key("gemini")
         if api_key is None:
             skip_reason = "No Gemini API key found."
@@ -340,11 +358,11 @@ def search(
     elif provider == "ollama":
         reranker = Reranker(provider=OllamaProvider(), top_n=top_n)
     else:
-        skip_reason = f"Unknown provider: {provider}."
+        skip_reason = f"Unknown provider: {escape(str(provider))}."
 
+    console.print()
     while True:
         try:
-            console.print()
             query = typer.prompt("Query").strip()
         except typer.Abort:
             break
@@ -366,54 +384,58 @@ def search(
 
 
 
-
-
 @app.command()
 def set_api_key(provider: str, api_key: str):
+    from codesearch import config
+
     if provider not in VALID_KEY_PROVIDERS:
-        error_console.print(f"[b red]Error: [/b red]Unknown provider: {provider}. Valid options: {', '.join(VALID_KEY_PROVIDERS)}")
+        error_console.print(f"[b red]Error: [/b red]Unknown provider: {escape(str(provider))}. Valid options: {', '.join(VALID_KEY_PROVIDERS)}")
         raise typer.Exit(code=1)
 
     if config.set_api_key(provider, api_key):
-        console.print(f"[b green]Success: [/b green]API key saved for {provider}.")
+        console.print(f"[b green]Success: [/b green]API key saved for {escape(str(provider))}.")
     else:
-        error_console.print(f"[b red]Error:[/b red] Failed to save API key for {provider}.")
+        error_console.print(f"[b red]Error:[/b red] Failed to save API key for {escape(str(provider))}.")
         raise typer.Exit(code=1)
 
 
 @app.command()
 def get_api_key(provider: str):
+    from codesearch import config
+
     if provider not in VALID_KEY_PROVIDERS:
-        error_console.print(f"[b red]Error: [/b red]Unknown provider: {provider}. Valid providers: {', '.join(VALID_KEY_PROVIDERS)}")
+        error_console.print(f"[b red]Error: [/b red]Unknown provider: {escape(str(provider))}. Valid providers: {', '.join(VALID_KEY_PROVIDERS)}")
         raise typer.Exit(code=1)
 
     api_key = config.get_api_key(provider)
     if api_key is None:
-        error_console.print(f"No API key configured for {provider}.")
+        error_console.print(f"No API key configured for {escape(str(provider))}.")
     else:
         masked = "..." + api_key[-4: ] if len(api_key) > 8 else "..."
-        console.print(f"[b green]Success: [/b green]{provider} API key Found: {masked}")
+        console.print(f"[b green]Success: [/b green]{escape(str(provider))} API key Found: {masked}")
 
 
 @app.command()
 def clear_api_key(provider: str):
+    from codesearch import config
+
     if provider not in VALID_KEY_PROVIDERS:
-        error_console.print(f"[b red]Error: [/b red]Unknown provider: {provider}. Valid providers: {', '.join(VALID_KEY_PROVIDERS)}")
+        error_console.print(f"[b red]Error: [/b red]Unknown provider: {escape(str(provider))}. Valid providers: {escape(', '.join(VALID_KEY_PROVIDERS))}")
         raise typer.Exit(code=1)
 
     if config.clear_api_key(provider):
-        console.print(f"[b green]Success: [/b green]API key cleared for {provider}.")
+        console.print(f"[b green]Success: [/b green]API key cleared for {escape(str(provider))}.")
     else:
-        error_console.print(f"[b yellow]Warning: [/b yellow]No API key was set for {provider}, or it could not be cleared.")
+        error_console.print(f"[b yellow]Warning: [/b yellow]No API key was set for {escape(str(provider))}, or it could not be cleared.")
 
 
 @app.command()
 def clear(folder: Path | None = None, all_items: bool = False):
     if not folder and not all_items:
-        error_console.print("[b yellow]Warning: [/ b yellow]Provide a folder to clear, or use --all-items to clear everything.")
+        error_console.print("[b yellow]Warning: [/b yellow]Provide --folder <path> or --all-items.")
         raise typer.Exit(code=1)
     if folder and all_items:
-        error_console.print("[b yellow]Warning: [/b yellow]Provide either a folder or --all-items.")
+        error_console.print("[b yellow]Warning: [/b yellow]Provide --folder <path> or --all-items.")
         raise typer.Exit(code=1)
 
     registry = load_registry()
@@ -428,16 +450,20 @@ def clear(folder: Path | None = None, all_items: bool = False):
             raise typer.Exit(code=0)
         hashes_to_clear = [project_hash]
 
-    for project_hash in hashes_to_clear:
-        (BM25_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
-        VectorIndex.delete(collection_name=project_hash, persist_path=CHROMA_DIR)
-        (GRAPH_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
-        del registry[project_hash]
+    console.print()
+    with console.status("Clearing...", spinner="arc"):
+        from codesearch.indexing.vector_index import VectorIndex
+
+        for project_hash in hashes_to_clear:
+            (BM25_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
+            VectorIndex.delete(collection_name=project_hash, persist_path=CHROMA_DIR)
+            (GRAPH_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
+            del registry[project_hash]
 
     try:
         save_registry(registry)
     except (OSError, TypeError) as e:
-        error_console.print(f"[b red]Error: [/b red]Indexes were cleared but failed to update registry: {e}")
+        error_console.print(f"[b red]Error: [/b red]Indexes were cleared but failed to update registry: {escape(str(e))}")
         raise typer.Exit(code=1)
 
     console.print(f"[b green]Success: [/b green]Cleared [cyan]{len(hashes_to_clear)}[/cyan] project(s).")
@@ -450,36 +476,44 @@ def reindex(folder: Path, timings: bool = False, include_tests: bool = False):
 
     parser = CodebaseParser(include_tests=include_tests)
 
-    tp0 = time.perf_counter()
-    functions = parser.parse_dir(folder)
-    tp1 = time.perf_counter()
+
+    with console.status("Parsing codebase...", spinner="arc"):
+        tp0 = time.perf_counter()
+        functions = parser.parse_dir(folder)
+        tp1 = time.perf_counter()
 
     if not functions:
         error_console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
         raise typer.Exit(code=1)
 
-
-    console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions. Building indexes...")
+    console.print()
+    console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions")
     if timings:
         console.print(f"[dim]Parsing took [cyan]{tp1 - tp0:.2f}[/cyan] seconds.[/dim]")
 
     try:
-        tb0 = time.perf_counter()
-        bm25_index = BM25Index.build(functions)
-        tb1 = time.perf_counter()
+        console.print()
+        with console.status("Building BM25, Vector, and Graph indexes...", spinner="arc"):
+            from codesearch.indexing.bm25_index import BM25Index
+            from codesearch.indexing.vector_index import VectorIndex
+            from codesearch.indexing.graph_index import GraphIndex
 
-        tv0 = time.perf_counter()
-        vector_index = VectorIndex.build(
-            functions,
-            persist=True,
-            collection_name=project_hash,
-            persist_path=CHROMA_DIR,
-        )
-        tv1 = time.perf_counter()
+            tb0 = time.perf_counter()
+            bm25_index = BM25Index.build(functions)
+            tb1 = time.perf_counter()
 
-        tg0 = time.perf_counter()
-        graph_index = GraphIndex.build(functions)
-        tg1 = time.perf_counter()
+            tv0 = time.perf_counter()
+            vector_index = VectorIndex.build(
+                functions,
+                persist=True,
+                collection_name=project_hash,
+                persist_path=CHROMA_DIR,
+            )
+            tv1 = time.perf_counter()
+
+            tg0 = time.perf_counter()
+            graph_index = GraphIndex.build(functions)
+            tg1 = time.perf_counter()
 
         if timings:
             console.print(f"[dim]BM25 index built in [cyan]{tb1 - tb0:.2f}[/cyan] seconds.[/dim]")
@@ -489,7 +523,7 @@ def reindex(folder: Path, timings: bool = False, include_tests: bool = False):
         bm25_index.save(BM25_DIR / f"{project_hash}.pkl")
         graph_index.save(GRAPH_DIR / f"{project_hash}.pkl")
     except Exception as e:
-        error_console.print(f"[b red]Error: [/b red]Failed to build indexes: {e}")
+        error_console.print(f"[b red]Error: [/b red]Failed to build indexes: {escape(str(e))}")
         raise typer.Exit(code=1)
 
     file_mtimes = get_file_mtimes(folder, include_tests)
@@ -505,9 +539,10 @@ def reindex(folder: Path, timings: bool = False, include_tests: bool = False):
     try:
         save_registry(registry)
     except (OSError, TypeError) as e:
-        error_console.print(f"[b red]Error: [/b red]Indexes were built but failed to update registry: {e}")
+        error_console.print(f"[b red]Error: [/b red]Indexes were built but failed to update registry: {escape(str(e))}")
         raise typer.Exit(code=1)
 
+    console.print()
     console.print(f"[b green]Success: [/b green]Indexed and saved [cyan]{len(functions)}[/cyan] functions from {escape(str(folder))}.")
 
 

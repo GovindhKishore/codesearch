@@ -30,7 +30,7 @@ def normalize_file_path(file_path: str) -> str:
 
 def setup() -> tuple[BM25Retriever, VectorRetriever, GraphRetriever]:
     try:
-        bm25_index, vector_index, graph_index, t0, t1, t2 = get_indexes(TARGET_FOLDER, no_index=False)
+        bm25_index, vector_index, graph_index, t0, t1, t2 = get_indexes(TARGET_FOLDER, no_index=False, include_tests=False)
     except typer.Exit as e:
         if e.exit_code == 0:
             raise RuntimeError("Evaluation cancelled")
@@ -43,7 +43,7 @@ def setup() -> tuple[BM25Retriever, VectorRetriever, GraphRetriever]:
     return bm25_retriever, vector_retriever, graph_retriever
 
 
-GRAPH_MAX_HOP = 2
+GRAPH_MAX_HOP = 1
 GRAPH_CAP = 10
 SEED_COUNT = 10
 

@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from codesearch.indexing.vector_index import VectorIndex
 from codesearch.parsing.parser import FunctionInfo
 from codesearch.retrieval.types import ScoredFunction
 from pathlib import Path
@@ -7,7 +6,7 @@ from pathlib import Path
 
 @dataclass
 class VectorRetriever:
-    index: VectorIndex
+    index: "VectorIndex"
 
     def search(self, query: str, top_k: int = 20, similarity_threshold: float = 0.3) -> list[ScoredFunction]:
         query_embedding = self.index.model.encode([query]).tolist()

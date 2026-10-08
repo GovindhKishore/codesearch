@@ -1,11 +1,11 @@
-from codesearch.indexing.bm25_index import BM25Index, tokenize
+from codesearch.indexing.bm25_index import tokenize
 from codesearch.retrieval.types import ScoredFunction
 from dataclasses import dataclass
 from codesearch.parsing.parser import FunctionInfo
 
 @dataclass
 class BM25Retriever:
-    index: BM25Index
+    index: "BM25Index"
 
     def search(self, query: str, top_k: int = 20) -> list[ScoredFunction]:
         tokenized_query = tokenize(query)

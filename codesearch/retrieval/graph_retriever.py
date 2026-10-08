@@ -1,19 +1,22 @@
-from dataclasses import dataclass
-from codesearch.indexing.graph_index import GraphIndex
+from dataclasses import dataclass, field
 from codesearch.retrieval.types import ScoredFunction
 from pathlib import Path
-import math
 from codesearch.parsing.parser import FunctionInfo
 import networkx as nx
 
 
+
 @dataclass
 class GraphRetriever:
-    index: GraphIndex
+    index: "GraphIndex"
+    reversed_graph: "nx.DiGraph" = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self):
+        self.reversed_graph = nx.reverse_view(self.index.graph)
 
     def search(self, seeds: list[ScoredFunction], max_hop: int = 1, decay_factor: float = 0.5) -> list[ScoredFunction]:
             seed_names = {(s.function.name, s.function.class_name) for s in seeds}
-            reversed_graph = self.index.graph.reverse()
+            reversed_graph = self.reversed_graph
 
             seed_rank = {}
             for s in seeds:
@@ -27,6 +30,7 @@ class GraphRetriever:
             return self._build_scored_function(seed_to_callees, seed_to_callers, decay_factor, seed_rank)
 
     def _reach_from_seeds(self, graph, seeds, max_hop):
+
         reach = {}
         for seed in seeds:
             if not graph.has_node(seed):

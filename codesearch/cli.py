@@ -42,7 +42,7 @@ def load_registry() -> dict:
     if not REGISTRY_PATH.exists():
         return {}
     try:
-        return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+        registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         error_console.print(f"[bold yellow]Warning: [/bold yellow] {REGISTRY_PATH} is corrupted and could not be read. Treating as empty.")
         return {}

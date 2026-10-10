@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 import ast, os
 from pathlib import Path
 from collections import defaultdict
+import warnings
 
 BUILTIN_SKIP = {
     "print", "len", "range", "str", "int", "float", "bool",
@@ -27,7 +28,7 @@ class FunctionInfo:
 class CodebaseParser:
     TEST_DIRS = {"tests", "test"}
 
-    def __init__(self, include_tests, skip_dirs: set[str] | None = None):
+    def __init__(self, include_tests: bool = False, skip_dirs: set[str] | None = None):
         self.skip_dirs = skip_dirs or {
             "__pycache__", ".git", "venv", ".venv", "node_modules", "dist", "build",
             ".eggs", "egg-info", ".idea", ".vscode", ".pytest_cache", ".mypy_cache",
@@ -35,6 +36,7 @@ class CodebaseParser:
         }
 
         self.include_tests = include_tests
+        self.skipped_files: list[str] = []
 
     def parse_dir(self, folder: Path) -> list[FunctionInfo]:
         all_functions = []
@@ -70,6 +72,8 @@ class CodebaseParser:
         return all_functions
 
     def parse_file(self, filepath: Path) -> list[FunctionInfo]:
+        functions: list[FunctionInfo] = []
+
         try:
             source = filepath.read_text(encoding="utf-8")
             with warnings.catch_warnings():
@@ -80,8 +84,6 @@ class CodebaseParser:
             self.skipped_files.append(str(filepath))
             return []
 
-        functions: list[FunctionInfo] = []
-        self._walk_body(tree.body, filepath, None, functions)
         return functions
 
     @staticmethod

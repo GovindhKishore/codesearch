@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 @dataclass
 class Fuser:
-    bm25_weight: float = 1.0
-    vector_weight: float = 1.0
-    structural_weight: float = 1.0
+    bm25_weight: float
+    vector_weight: float
+    structural_weight: float
     k: int = 60
 
     def fuse(

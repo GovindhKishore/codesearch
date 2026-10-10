@@ -96,10 +96,8 @@ class VectorIndex:
                 f"Try running 'codesearch reindex' to fix."
             ) from e
 
-        if model_name == DEFAULT_MODEL_NAME:
-            loaded_model = SentenceTransformer(model_name)
-        else:
-            loaded_model = SentenceTransformer(model_name)
+
+        loaded_model = SentenceTransformer(model_name)
 
         return cls(collection=collection, model=loaded_model, model_name=model_name)
 

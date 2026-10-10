@@ -44,8 +44,31 @@ def load_registry() -> dict:
     try:
         registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-        error_console.print(f"[bold yellow]Warning: [/bold yellow] {REGISTRY_PATH} is corrupted and could not be read. Treating as empty.")
-        return {}
+        raise CorruptedRegistryError(f"Registry file {REGISTRY_PATH} is corrupted.")
+    if not isinstance(registry, dict):
+        raise CorruptedRegistryError(f"Registry file {REGISTRY_PATH} is corrupted.")
+    return registry
+
+def safe_load_registry_index_cmds() -> dict:
+    try:
+        registry = load_registry()
+        return registry
+    except CorruptedRegistryError:
+        backup_date_time = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+        backup = REGISTRY_PATH.with_name(f"registry.corrupted-{backup_date_time}.json")
+        try:
+            REGISTRY_PATH.rename(backup)
+            error_console.print(
+                f"[bold yellow]Warning: [/bold yellow]Registry was corrupted. Moved to {escape(backup.as_posix())}."
+                f" Starting fresh Registry"
+            )
+            return {}
+        except OSError:
+            error_console.print(f"[bold yellow]Warning: [/bold yellow]Registry is corrupted and could not be backed up")
+            confirm = typer.confirm("Do you want to initialize new registry without backing up the corrupted one", default=False)
+            if not confirm:
+                raise typer.Exit(code=0)
+            return {}
 
 def save_registry(registry: dict) -> None:
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -75,7 +98,7 @@ def get_file_mtimes(folder: Path, include_tests: bool) -> dict[str, float]:
 
     return file_mtimes
 
-def get_indexes(folder: Path, no_index: bool, include_tests: bool) -> tuple["BM25Index", "VectorIndex", "GraphIndex", float, float, float]:
+def get_indexes(folder: Path, no_index: bool, include_tests: bool, timings: bool) -> tuple["BM25Index", "VectorIndex", "GraphIndex", float, float, float]:
     if not no_index:
         project_hash = compute_project_hash(folder)
 
@@ -135,11 +158,28 @@ def get_indexes(folder: Path, no_index: bool, include_tests: bool) -> tuple["BM2
 
     else:
         parser = CodebaseParser(include_tests=include_tests)
-        functions = parser.parse_dir(folder)
+
+        with console.status("Parsing codebase...", spinner="arc"):
+            tp0 = time.perf_counter()
+            functions = parser.parse_dir(folder)
+            tp1 = time.perf_counter()
+
+        if parser.skipped_files:
+            error_console.print(
+                f"[bold yellow]Warning: [/bold yellow]Skipped [cyan]{len(parser.skipped_files)}[/cyan] file(s) "
+                f"that could not be parsed (for example syntax errors, unsupported encoding, unreadable files, or very deeply nested code). "
+                f"Functions in them will not be searchable."
+            )
 
         if not functions:
             error_console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
             raise typer.Exit(code=1)
+
+        console.print()
+        console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions")
+        if timings:
+            console.print(f"[dim]Parsing took [cyan]{tp1 - tp0:.2f}[/cyan] seconds.[/dim]")
+
 
         try:
             console.print()
@@ -205,7 +245,7 @@ def search_helper(bm25_retriever: "BM25Retriever",
         console.print(f"[dim]Graph search took [cyan]{tgs1 - tgs0:.2f}[/cyan] seconds.[/dim]")
 
     fused_results = fuser.fuse(bm25_results, vector_results, graph_results[:10])
-    rerank_candidates = fused_results[:20]
+    rerank_candidates = fused_results[:num_rerank_candids]
 
     return rerank_candidates
 
@@ -245,7 +285,8 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
     folder = folder.resolve()
     project_hash = compute_project_hash(folder)
 
-    registry = load_registry()
+    registry = safe_load_registry_index_cmds()
+
     if project_hash in registry:
         test_status = "test files" if registry[project_hash]["include_tests"] else "no test files"
         console.print(f"Already indexed (with {test_status}): {escape(str(folder))}. Run 'codesearch reindex' to rebuild.")
@@ -257,6 +298,13 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
         tp0 = time.perf_counter()
         functions = parser.parse_dir(folder)
         tp1 = time.perf_counter()
+
+    if parser.skipped_files:
+        error_console.print(
+            f"[bold yellow]Warning: [/bold yellow]Skipped [cyan]{len(parser.skipped_files)}[/cyan] file(s) "
+            f"that could not be parsed (for example syntax errors, unsupported encoding, unreadable files, or very deeply nested code). "
+            f"Functions in them will not be searchable."
+        )
 
     if not functions:
         console.print()
@@ -314,11 +362,102 @@ def index(folder: Path, timings: bool = False, include_tests: bool = False):
     try:
         save_registry(registry)
     except (OSError, TypeError) as e:
-        error_console.print(f"[b red]Error: [/b red]Indexes were built but failed to update registry: {escape(str(e))}")
+        error_console.print(
+            f"[b red]Error: [/b red]Indexes were built but could not be registered: {escape(str(e))}\n"
+            f"Run 'codesearch reindex {escape(str(folder))}' again to rebuild."
+        )
         raise typer.Exit(code=1)
 
     console.print()
     console.print(f"[b green]Success: [/b green]Indexed and saved [cyan]{len(functions)}[/cyan] functions from {escape(str(folder))}.")
+
+
+@app.command()
+def reindex(folder: Path, timings: bool = False, include_tests: bool = False):
+    folder = folder.resolve()
+    project_hash = compute_project_hash(folder)
+
+    registry = safe_load_registry_index_cmds()
+
+    parser = CodebaseParser(include_tests=include_tests)
+
+    with console.status("Parsing codebase...", spinner="arc"):
+        tp0 = time.perf_counter()
+        functions = parser.parse_dir(folder)
+        tp1 = time.perf_counter()
+
+    if parser.skipped_files:
+        error_console.print(
+            f"[bold yellow]Warning: [/bold yellow]Skipped [cyan]{len(parser.skipped_files)}[/cyan] file(s) "
+            f"that could not be parsed (for example syntax errors, unsupported encoding, unreadable files, or very deeply nested code). "
+            f"Functions in them will not be searchable."
+        )
+
+    if not functions:
+        error_console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
+        raise typer.Exit(code=1)
+
+    console.print()
+    console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions")
+    if timings:
+        console.print(f"[dim]Parsing took [cyan]{tp1 - tp0:.2f}[/cyan] seconds.[/dim]")
+
+    try:
+        console.print()
+        with console.status("Building BM25, Vector, and Graph indexes...", spinner="arc"):
+            from codesearch.indexing.bm25_index import BM25Index
+            from codesearch.indexing.vector_index import VectorIndex
+            from codesearch.indexing.graph_index import GraphIndex
+
+            tb0 = time.perf_counter()
+            bm25_index = BM25Index.build(functions)
+            tb1 = time.perf_counter()
+
+            tv0 = time.perf_counter()
+            vector_index = VectorIndex.build(
+                functions,
+                persist=True,
+                collection_name=project_hash,
+                persist_path=CHROMA_DIR,
+            )
+            tv1 = time.perf_counter()
+
+            tg0 = time.perf_counter()
+            graph_index = GraphIndex.build(functions)
+            tg1 = time.perf_counter()
+
+        if timings:
+            console.print(f"[dim]BM25 index built in [cyan]{tb1 - tb0:.2f}[/cyan] seconds.[/dim]")
+            console.print(f"[dim]Vector index built in [cyan]{tv1 - tv0:.2f}[/cyan] seconds.[/dim]")
+            console.print(f"[dim]Graph index built in [cyan]{tg1 - tg0:.2f}[/cyan] seconds.[/dim]")
+
+        bm25_index.save(BM25_DIR / f"{project_hash}.pkl")
+        graph_index.save(GRAPH_DIR / f"{project_hash}.pkl")
+    except Exception as e:
+        error_console.print(f"[b red]Error: [/b red]Failed to build indexes: {escape(str(e))}")
+        raise typer.Exit(code=1)
+
+    file_mtimes = get_file_mtimes(folder, include_tests)
+
+    registry[project_hash] = {
+        "folder": folder.as_posix(),
+        "vector_index_embedding_model": vector_index.model_name,
+        "file_mtimes": file_mtimes,
+        "include_tests": include_tests,
+    }
+
+    try:
+        save_registry(registry)
+    except (OSError, TypeError) as e:
+        error_console.print(
+            f"[b red]Error: [/b red]Indexes were built but could not be registered: {escape(str(e))}\n"
+            f"Run 'codesearch reindex {escape(str(folder))}' again to rebuild."
+        )
+        raise typer.Exit(code=1)
+
+    console.print()
+    console.print(f"[b green]Success: [/b green]Indexed and saved [cyan]{len(functions)}[/cyan] functions from {escape(str(folder))}.")
+
 
 
 @app.command()
@@ -332,12 +471,13 @@ def search(
         decay_factor: float = 0.5,
         provider: str | None = None,
         top_n: int = 10,
+        num_rerank_candids: int = 20,
         timings: bool = False,
         include_tests: bool = False
     ):
     folder = folder.resolve()
 
-    bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index, include_tests=include_tests)
+    bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index, include_tests=include_tests, timings=timings)
 
     if timings:
         console.print()
@@ -386,7 +526,7 @@ def search(
         if not query:
             continue
 
-        rerank_candidates = search_helper(bm25_retriever, vector_retriever, graph_retriever, fuser, query, max_hop, decay_factor, timings)
+        rerank_candidates = search_helper(bm25_retriever, vector_retriever, graph_retriever, fuser, query, max_hop, decay_factor, num_rerank_candids, timings)
 
         if not rerank_candidates:
             console.print()
@@ -397,6 +537,75 @@ def search(
 
         print_results(query, final_results)
 
+
+@app.command()
+def clear(folder: Path | None = None, all_items: bool = False):
+    import shutil
+
+    if bool(folder) == all_items:
+        error_console.print("[b yellow]Warning: [/b yellow]Provide --folder <path> or --all-items.")
+        raise typer.Exit(code=1)
+
+    if all_items:
+        try:
+            for d in (BM25_DIR, GRAPH_DIR, CHROMA_DIR):
+                if d.exists():
+                    shutil.rmtree(d)
+            save_registry({})
+        except OSError as e:
+            error_console.print(f"[b red]Error: [/b red]Could not clear everything: {escape(str(e))}")
+            raise typer.Exit(code=1)
+        console.print("[b green]Success: [/b green]Cleared all indexes.")
+        return
+
+    corrupted = False
+    try:
+        registry = load_registry()
+    except CorruptedRegistryError:
+        corrupted = True
+        registry = {}
+        error_console.print("[b yellow]Warning: [/b yellow]Registry is corrupted. Clearing without it.")
+
+    folder = folder.resolve()
+    project_hash = compute_project_hash(folder)
+
+    if not corrupted and project_hash not in registry:
+        error_console.print(f"[b yellow]Warning: [/b yellow]{escape(str(folder))} is not indexed. Nothing to clear.")
+        raise typer.Exit(code=0)
+
+    console.print()
+    with console.status("Clearing...", spinner="arc"):
+        from codesearch.indexing.vector_index import VectorIndex
+
+        try:
+            (BM25_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
+            VectorIndex.delete(collection_name=project_hash, persist_path=CHROMA_DIR)
+            (GRAPH_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
+        except Exception as e:
+            error_console.print(
+                f"[b red]Error: [/b red]Could not fully clear {escape(str(folder))}: {escape(str(e))}."
+            )
+            raise typer.Exit(code=1)
+
+    if corrupted:
+        error_console.print(
+            "[b yellow]Warning: [/b yellow]The registry is corrupted, so it was not updated. "
+            f"Any index data for {escape(str(folder))} was deleted. "
+            "The next 'index' or 'reindex' may back up the corrupted registry, "
+            "and that backup may still list this folder in registry even though its data is gone."
+        )
+        return
+
+    del registry[project_hash]
+
+    try:
+        save_registry(registry)
+    except (OSError, TypeError) as e:
+        error_console.print(
+            f"[b red]Error: [/b red]Indexes were cleared but failed to update registry: {escape(str(e))}")
+        raise typer.Exit(code=1)
+
+    console.print(f"[b green]Success: [/b green]Cleared indexes for {escape(str(folder))} project.")
 
 
 @app.command()
@@ -424,7 +633,7 @@ def get_api_key(provider: str):
 
     api_key = config.get_api_key(provider)
     if api_key is None:
-        error_console.print(f"No API key configured for {escape(str(provider))}.")
+        error_console.print(f"No API key configured for {escape(str(provider))}. Run `codesearch set-api-key {provider} <key>` to set it.")
     else:
         masked = "..." + api_key[-4: ] if len(api_key) > 8 else "..."
         console.print(f"[b green]Success: [/b green]{escape(str(provider))} API key Found: {masked}")
@@ -443,122 +652,6 @@ def clear_api_key(provider: str):
     else:
         error_console.print(f"[b yellow]Warning: [/b yellow]No API key was set for {escape(str(provider))}, or it could not be cleared.")
 
-
-@app.command()
-def clear(folder: Path | None = None, all_items: bool = False):
-    if not folder and not all_items:
-        error_console.print("[b yellow]Warning: [/b yellow]Provide --folder <path> or --all-items.")
-        raise typer.Exit(code=1)
-    if folder and all_items:
-        error_console.print("[b yellow]Warning: [/b yellow]Provide --folder <path> or --all-items.")
-        raise typer.Exit(code=1)
-
-    registry = load_registry()
-
-    if all_items:
-        hashes_to_clear = list(registry.keys())
-    else:
-        folder = folder.resolve()
-        project_hash = compute_project_hash(folder)
-        if project_hash not in registry:
-            error_console.print(f"[b yellow]Warning: [/b yellow]{escape(str(folder))} is not indexed. Nothing to clear.")
-            raise typer.Exit(code=0)
-        hashes_to_clear = [project_hash]
-
-    console.print()
-    with console.status("Clearing...", spinner="arc"):
-        from codesearch.indexing.vector_index import VectorIndex
-
-        for project_hash in hashes_to_clear:
-            (BM25_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
-            VectorIndex.delete(collection_name=project_hash, persist_path=CHROMA_DIR)
-            (GRAPH_DIR / f"{project_hash}.pkl").unlink(missing_ok=True)
-            del registry[project_hash]
-
-    try:
-        save_registry(registry)
-    except (OSError, TypeError) as e:
-        error_console.print(f"[b red]Error: [/b red]Indexes were cleared but failed to update registry: {escape(str(e))}")
-        raise typer.Exit(code=1)
-
-    console.print(f"[b green]Success: [/b green]Cleared [cyan]{len(hashes_to_clear)}[/cyan] project(s).")
-
-
-@app.command()
-def reindex(folder: Path, timings: bool = False, include_tests: bool = False):
-    folder = folder.resolve()
-    project_hash = compute_project_hash(folder)
-
-    parser = CodebaseParser(include_tests=include_tests)
-
-
-    with console.status("Parsing codebase...", spinner="arc"):
-        tp0 = time.perf_counter()
-        functions = parser.parse_dir(folder)
-        tp1 = time.perf_counter()
-
-    if not functions:
-        error_console.print(f"[bold yellow]Warning: [/bold yellow]No functions found in {escape(str(folder))}. Nothing to index.")
-        raise typer.Exit(code=1)
-
-    console.print()
-    console.print(f"Parsed [cyan]{len(functions)}[/cyan] functions")
-    if timings:
-        console.print(f"[dim]Parsing took [cyan]{tp1 - tp0:.2f}[/cyan] seconds.[/dim]")
-
-    try:
-        console.print()
-        with console.status("Building BM25, Vector, and Graph indexes...", spinner="arc"):
-            from codesearch.indexing.bm25_index import BM25Index
-            from codesearch.indexing.vector_index import VectorIndex
-            from codesearch.indexing.graph_index import GraphIndex
-
-            tb0 = time.perf_counter()
-            bm25_index = BM25Index.build(functions)
-            tb1 = time.perf_counter()
-
-            tv0 = time.perf_counter()
-            vector_index = VectorIndex.build(
-                functions,
-                persist=True,
-                collection_name=project_hash,
-                persist_path=CHROMA_DIR,
-            )
-            tv1 = time.perf_counter()
-
-            tg0 = time.perf_counter()
-            graph_index = GraphIndex.build(functions)
-            tg1 = time.perf_counter()
-
-        if timings:
-            console.print(f"[dim]BM25 index built in [cyan]{tb1 - tb0:.2f}[/cyan] seconds.[/dim]")
-            console.print(f"[dim]Vector index built in [cyan]{tv1 - tv0:.2f}[/cyan] seconds.[/dim]")
-            console.print(f"[dim]Graph index built in [cyan]{tg1 - tg0:.2f}[/cyan] seconds.[/dim]")
-
-        bm25_index.save(BM25_DIR / f"{project_hash}.pkl")
-        graph_index.save(GRAPH_DIR / f"{project_hash}.pkl")
-    except Exception as e:
-        error_console.print(f"[b red]Error: [/b red]Failed to build indexes: {escape(str(e))}")
-        raise typer.Exit(code=1)
-
-    file_mtimes = get_file_mtimes(folder, include_tests)
-    registry = load_registry()
-
-    registry[project_hash] = {
-        "folder": folder.as_posix(),
-        "vector_index_embedding_model": vector_index.model_name,
-        "file_mtimes": file_mtimes,
-        "include_tests": include_tests,
-    }
-
-    try:
-        save_registry(registry)
-    except (OSError, TypeError) as e:
-        error_console.print(f"[b red]Error: [/b red]Indexes were built but failed to update registry: {escape(str(e))}")
-        raise typer.Exit(code=1)
-
-    console.print()
-    console.print(f"[b green]Success: [/b green]Indexed and saved [cyan]{len(functions)}[/cyan] functions from {escape(str(folder))}.")
 
 
 if __name__ == "__main__":

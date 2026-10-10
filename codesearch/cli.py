@@ -25,8 +25,8 @@ VALID_KEY_PROVIDERS = {"gemini"}
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["HF_HUB_VERBOSITY"] = "error"
 
-console = Console(highlight=False, soft_wrap=True)
-error_console = Console(stderr=True, highlight=False, soft_wrap=True)
+console = Console(highlight=False)
+error_console = Console(stderr=True, highlight=False)
 
 class CorruptedRegistryError(Exception):
     """
@@ -112,7 +112,7 @@ def get_indexes(folder: Path, no_index: bool, include_tests: bool, timings: bool
             raise typer.Exit(code=1)
 
         if project_hash not in registry:
-            error_console.print(f"[bold yellow]Warning: [/bold yellow]{escape(str(folder))} is not indexed. Run 'codesearch index {folder}' first.")
+            error_console.print(f"[bold yellow]Warning: [/bold yellow]{escape(str(folder))} is not indexed. Run 'codesearch index {escape(str(folder))}' first.")
             raise typer.Exit(code=1)
 
         indexed_project = registry[project_hash]
@@ -150,7 +150,7 @@ def get_indexes(folder: Path, no_index: bool, include_tests: bool, timings: bool
                 tg1 = time.perf_counter()
 
         except Exception as e:
-            error_console.print(f"[b red]Error:[/b red] Failed to load indexes: {escape(str(e))}")
+            error_console.print(f"[b red]Error:[/b red] Failed to load indexes: {escape(str(e))}. Run 'codesearch reindex <folder>' to rebuild.")
             raise typer.Exit(code=1)
 
 
@@ -480,10 +480,11 @@ def search(
     bm25_index, vector_index, graph_index, blt, vlt, glt = get_indexes(folder, no_index=no_index, include_tests=include_tests, timings=timings)
 
     if timings:
+        action = "build" if no_index else "load"
         console.print()
-        console.print(f"[dim]BM25 index load took [cyan]{blt:.2f}[/cyan] seconds.[/dim]")
-        console.print(f"[dim]Vector index load took [cyan]{vlt:.2f}[/cyan] seconds.[/dim]")
-        console.print(f"[dim]Graph index load took [cyan]{glt:.2f}[/cyan] seconds.[/dim]")
+        console.print(f"[dim]BM25 index {action} took [cyan]{blt:.2f}[/cyan] seconds.[/dim]")
+        console.print(f"[dim]Vector index {action} took [cyan]{vlt:.2f}[/cyan] seconds.[/dim]")
+        console.print(f"[dim]Graph index {action} took [cyan]{glt:.2f}[/cyan] seconds.[/dim]")
 
     from codesearch.retrieval.bm25_retriever import BM25Retriever
     from codesearch.retrieval.vector_retriever import VectorRetriever

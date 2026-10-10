@@ -79,7 +79,15 @@ def get_indexes(folder: Path, no_index: bool, include_tests: bool) -> tuple["BM2
     if not no_index:
         project_hash = compute_project_hash(folder)
 
-        registry = load_registry()
+        try:
+            registry = load_registry()
+        except CorruptedRegistryError:
+            error_console.print(
+                f"[b red]Error: [/b red]The registry is corrupted, so {escape(str(folder))} cannot be looked up. "
+                f"Run 'codesearch reindex {escape(str(folder))}' to fix it."
+            )
+            raise typer.Exit(code=1)
+
         if project_hash not in registry:
             error_console.print(f"[bold yellow]Warning: [/bold yellow]{escape(str(folder))} is not indexed. Run 'codesearch index {folder}' first.")
             raise typer.Exit(code=1)

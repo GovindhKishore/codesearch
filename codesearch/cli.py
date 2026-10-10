@@ -175,6 +175,7 @@ def search_helper(bm25_retriever: "BM25Retriever",
                   query: str,
                   max_hop: int,
                   decay_factor: float,
+                  num_rerank_candids: int,
                   timings : bool = False) -> list[ScoredFunction]:
     tbs0 = time.perf_counter()
     bm25_results = bm25_retriever.search(query)

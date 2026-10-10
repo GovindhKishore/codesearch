@@ -28,6 +28,12 @@ os.environ["HF_HUB_VERBOSITY"] = "error"
 console = Console(highlight=False, soft_wrap=True)
 error_console = Console(stderr=True, highlight=False, soft_wrap=True)
 
+class CorruptedRegistryError(Exception):
+    """
+    Raised when the registry file is corrupted.
+    """
+    pass
+
 
 def compute_project_hash(folder: Path) -> str:
     return hashlib.sha256(folder.as_posix().encode("utf-8")).hexdigest()
